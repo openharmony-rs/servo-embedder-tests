@@ -1,0 +1,37 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>servo-embedder-tests IME</title>
+<style>
+  body { margin: 0; font: 24px sans-serif; }
+  input, textarea { display: block; box-sizing: border-box; width: 90%; margin: 24px 5%; font: 28px sans-serif; }
+  input { height: 72px; }
+  textarea { height: 160px; }
+</style>
+<input id="field" autocomplete="off">
+<textarea id="area"></textarea>
+<script src="report.js"></script>
+<script>
+  for (const type of ["keydown", "beforeinput", "input", "compositionstart", "compositionupdate", "compositionend",
+                      "focus", "blur"]) {
+    document.addEventListener(type, (event) => {
+      const target = event.target;
+      report({
+        type,
+        target: target.id ?? null,
+        value: target.value ?? null,
+        data: event.data ?? null,
+        inputType: event.inputType ?? null,
+        key: event.key ?? null,
+        isComposing: event.isComposing ?? null,
+      });
+    }, true);
+  }
+  addEventListener("load", () => {
+    const rect = (id) => {
+      const r = document.getElementById(id).getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    };
+    report({ type: "geometry", dpr: devicePixelRatio, field: rect("field"), area: rect("area") });
+  });
+</script>

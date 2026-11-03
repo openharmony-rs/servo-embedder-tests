@@ -1,0 +1,40 @@
+[project]
+name = "servo-embedder-tests"
+version = "0.1.0"
+description = "Embedder tests for Servo: what servoshell and its users do beyond WPT, on OpenHarmony, HarmonyOS and desktop"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0 OR MIT"
+license-files = ["LICENSE-APACHE", "LICENSE-MIT"]
+dependencies = [
+    "hdc-py>=0.2.1,<0.3",
+    "ohos-test-ime>=0.1,<0.2",
+    "pytest>=8.3",
+    "selenium>=4.30",
+    "tomlkit>=0.13",
+]
+
+[project.urls]
+Repository = "https://github.com/openharmony-rs/servo-embedder-tests"
+
+[project.scripts]
+servo-embedder-tests = "servo_embedder_tests.cli:main"
+
+[project.entry-points.pytest11]
+servo_embedder_tests = "servo_embedder_tests.plugin"
+
+[build-system]
+requires = ["uv_build>=0.9,<0.13"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["ruff>=0.14", "pyrefly>=0.40"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
