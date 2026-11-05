@@ -65,7 +65,12 @@ class OhosDevice:
         return value
 
     def device_class(self) -> str:
-        return "harmonyos" if self.param("const.product.os.dist.name") == "HarmonyOS" else "openharmony"
+        if self.param("const.product.os.dist.name") == "HarmonyOS":
+            return "harmonyos"
+        # The QEMU images, e.g. those of `cargo ohos emulator`, run on QEMU's `virt` machine.
+        if self.param("ohos.boot.hardware") == "virt":
+            return "openharmony-emulator"
+        return "openharmony"
 
     def describe(self) -> dict[str, str | None]:
         return {
