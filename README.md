@@ -43,6 +43,8 @@ harmonyos = ["TIMEOUT"]
 issue = "https://github.com/servo/servo/issues/12345"
 ```
 
+The detected device classes are `harmonyos`, `openharmony` and `openharmony-emulator` (QEMU images such as
+those of `cargo ohos emulator`); `--device-class` overrides the detection.
 Lookup tries the device class, then its prefixes (`openharmony-emulator` → `openharmony`), then `default`.
 After a run, `servo-embedder-tests update-expectations <artifacts>/results.json --expectations expectations.toml`
 rewrites the file to match, leaving entries and comments in place. `--intermittent` adds statuses instead of
