@@ -3,6 +3,8 @@
 import json
 import textwrap
 
+from servo_embedder_tests.platform import DesktopHost
+
 pytest_plugins = ["pytester"]
 
 
@@ -74,7 +76,9 @@ def test_rerun_clears_earlier_artifacts(pytester):
     assert (out / "keep").is_dir()
 
 
-def test_device_loss_keeps_results(pytester):
+def test_device_loss_keeps_results(pytester, monkeypatch):
+    # The conftest below replaces it for the whole process; this restores it after the test.
+    monkeypatch.setattr(DesktopHost, "remove_forwards", DesktopHost.remove_forwards)
     pytester.makeconftest(
         textwrap.dedent(
             """
@@ -112,3 +116,25 @@ def test_device_loss_keeps_results(pytester):
     assert data["results"]["test_fake.py::test_pass"]["status"] == "PASS"
     assert data["results"]["test_fake.py::test_fail"]["status"] == "FAIL"
     assert data["results"]["test_fake.py::test_fail"]["message"].startswith("AssertionError: broken")
+
+
+def test_tests_without_test_ime_skip_before_servoshell_starts(pytester):
+    pytester.makeconftest(
+        textwrap.dedent(
+            """
+            import pytest
+
+            @pytest.fixture
+            def servo():
+                raise AssertionError("servoshell started")
+
+            @pytest.fixture
+            def ime():
+                pass
+            """
+        )
+    )
+    pytester.makepyfile(test_fake="def test_typing(servo, ime): pass\n")
+    result = pytester.runpytest("--platform", "desktop", "--device-class", "linux", "--artifacts", "out", "-rs")
+    result.assert_outcomes(skipped=1)
+    result.stdout.fnmatch_lines(["*needs a test IME*"])
