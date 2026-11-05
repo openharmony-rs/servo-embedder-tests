@@ -32,6 +32,7 @@ EXPECTED_KEY = pytest.StashKey[list[str]]()
 TEST_ARTIFACTS_MARKER = "test-key.txt"
 RUN_ARTIFACTS = ("results.json", "hilog.txt", "servoshell.log", "mitmproxy.log")
 TEST_KEY = pytest.StashKey[str]()
+NEEDS_TEST_IME = "needs a test IME: pass --test-ime <bundle>"
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -150,6 +151,10 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         families = [f for m in item.iter_markers("platform") for f in m.args]
         if families and run.family not in families:
             item.add_marker(pytest.mark.skip(reason=f"only on {', '.join(families)}"))
+            continue
+        if "ime" in getattr(item, "fixturenames", ()) and not config.option.test_ime:
+            # The fixture would skip only after `servo` has started servoshell.
+            item.add_marker(pytest.mark.skip(reason=NEEDS_TEST_IME))
             continue
         expected = run.expectations.get(key, run.device_class)
         item.stash[EXPECTED_KEY] = expected.statuses
@@ -488,6 +493,6 @@ def ime(device: OhosDevice, scenario_run: ScenarioRun) -> Iterator[TestIme]:
     """The test IME from ohos-ime, current for the duration of the test; the previous IME is restored after."""
     bundle = scenario_run.config.option.test_ime
     if not bundle:
-        pytest.skip("needs a test IME: pass --test-ime <bundle>")
+        pytest.skip(NEEDS_TEST_IME)
     with TestIme(device.device, bundle, device_port=scenario_run.config.option.test_ime_port) as test_ime:
         yield test_ime
