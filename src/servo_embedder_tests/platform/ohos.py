@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import shlex
 import subprocess
@@ -20,6 +21,8 @@ from ..ui import Layout
 DEVICE_TMP = "/data/local/tmp"
 # Buttons that close system pop-ups such as the USB mode dialog without changing anything.
 DIALOG_BUTTONS = ("OK", "确定", "Cancel", "取消")
+# The system web engine's bundle: HarmonyOS, OpenHarmony.
+ARKWEB_BUNDLES = ("com.huawei.hmos.arkwebcore", "com.ohos.arkwebcore")
 
 
 @dataclass(frozen=True)
@@ -77,7 +80,26 @@ class OhosDevice:
             "os": self.param("const.ohos.fullname"),
             "api": self.param("const.ohos.apiversion"),
             "model": self.param("const.product.model"),
+            "arkweb": next(filter(None, map(self.bundle_version, ARKWEB_BUNDLES)), None),
         }
+
+    def bundle_version(self, bundle: str) -> str | None:
+        """The version name of an installed bundle."""
+        m = re.search(r'"versionName": "([^"]+)"', self.shell(f"bm dump -n {shlex.quote(bundle)}"))
+        return m.group(1) if m else None
+
+    def time_ms(self) -> int:
+        """The device's clock, in milliseconds since the epoch, the time base of `faults`."""
+        return int(self.shell("date +%s").strip()) * 1000
+
+    def faults(self, since_ms: int) -> list[dict[str, object]]:
+        """The fault events, such as crashes and freezes, that the system logged since `since_ms`."""
+        output = self.shell(f"hisysevent -l -g FAULT -s {int(since_ms)} -e {self.time_ms() + 1000}")
+        events = []
+        for line in output.splitlines():
+            with contextlib.suppress(ValueError):
+                events.append(json.loads(line))
+        return events
 
     def forward(self, port: int) -> None:
         """Makes `port` on the device reachable as 127.0.0.1:`port` on the host."""
@@ -113,6 +135,10 @@ class OhosDevice:
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 500) -> None:
         self.shell(f"uinput -T -m {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}")
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 800, hold_ms: int = 400) -> None:
+        """Like `swipe`, but holds still for `hold_ms` before lifting, so that the content doesn't fling."""
+        self.shell(f"uinput -T -m {int(x1)} {int(y1)} {int(x2)} {int(y2)} -k {int(hold_ms)} {int(duration_ms)}")
 
     def key(self, name: str) -> None:
         self.shell(f"uitest uiInput keyEvent {shlex.quote(name)}")

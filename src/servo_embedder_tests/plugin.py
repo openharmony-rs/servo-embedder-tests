@@ -25,6 +25,7 @@ from .platform import DesktopHost, HilogStream, OhosDevice, Platform
 from .proxy import MitmProxy, ProxyMode
 from .servoshell import PrefValue, Servoshell, ServoshellDesktop, ServoshellOhos
 from .webdriver import connect
+from .webview_app import WebViewApp
 
 BUNDLED_SCENARIOS = Path(str(resources.files("servo_embedder_tests") / "scenarios"))
 EXPECTED_KEY = pytest.StashKey[list[str]]()
@@ -54,6 +55,13 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--proxy", type=ProxyMode, choices=list(ProxyMode), default=ProxyMode.OFF, help="mitmproxy mode")
     group.addoption("--proxy-dump", type=Path, default=Path("/tmp/mitmproxy-dump"), help="mitmproxy dump file")
     group.addoption("--pages-dir", type=Path, action="append", default=[], help="extra fixture page directory")
+    group.addoption(
+        "--webview-apps",
+        type=Path,
+        action="append",
+        default=[],
+        help="TOML file or folder of app definitions for the webview_apps scenarios (repeatable)",
+    )
     group.addoption("--test-ime", metavar="BUNDLE", help="bundle of an installed test IME (enables IME scenarios)")
     group.addoption("--test-ime-hap", type=Path, help="install this test IME HAP before the run")
     group.addoption("--test-ime-port", type=int, default=8971, help="the test IME's control port on the device")
@@ -265,12 +273,20 @@ def _status(call: pytest.CallInfo[None], item: pytest.Item) -> str:
     return "FAIL"
 
 
-def _is_running(app: Servoshell) -> bool | None:
+def _is_running(app: Servoshell | WebViewApp) -> bool | None:
     """Whether `app` is running, or None if that can't be told, e.g. because the device is gone."""
     try:
         return app.is_running()
     except Exception:
         return None
+
+
+def _crashed(app: WebViewApp) -> bool:
+    """Whether the app exited or one of its processes crashed; False if that can't be told."""
+    try:
+        return not app.is_running() or bool(app.crashes())
+    except Exception:
+        return False
 
 
 @pytest.hookimpl(wrapper=True)
@@ -305,8 +321,13 @@ def pytest_runtest_makereport(
     if report.when == "teardown" or (report.when == "setup" and report.passed):
         return report
     status = _status(call, item)
-    session = item.funcargs.get("servo") if hasattr(item, "funcargs") else None
-    if status in ("PASS", "FAIL") and isinstance(session, ServoSession) and _is_running(session.app) is False:
+    funcargs = getattr(item, "funcargs", {})
+    session = funcargs.get("servo")
+    webview_apps = [value for value in funcargs.values() if isinstance(value, WebViewApp)]
+    apps: list[Servoshell | WebViewApp] = [session.app] if isinstance(session, ServoSession) else []
+    if status in ("PASS", "FAIL") and any(_is_running(app) is False for app in apps + webview_apps):
+        status = "CRASH"
+    elif status in ("FAIL", "TIMEOUT") and any(_crashed(app) for app in webview_apps):
         status = "CRASH"
     if status == "SKIP":
         run.report.results[key] = Result(key, "SKIP", expected, str(call.excinfo.value) if call.excinfo else "")
@@ -324,9 +345,11 @@ def pytest_runtest_makereport(
         report.longrepr = f"Unexpected PASS (expected {'/'.join(expected)}): update the expectations"
     elif status == "CRASH" and report.passed:
         report.outcome = "failed"
-        report.longrepr = "servoshell exited during the test"
+        report.longrepr = "the app exited during the test"
     if isinstance(session, ServoSession):
         session.save_artifacts(key)
+    for app in webview_apps:
+        app.save_failure()
     return report
 
 

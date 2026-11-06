@@ -1,0 +1,16 @@
+# arkweb-test shows pages in ArkWeb's Web component, the system web view; `param set web.engine.enforce` picks the
+# engine it uses. Started with `--ps page tabs`, its first tab's web view loads the start URL. Its other two tabs show
+# built-in pages of one colour, too plain for the checks, so they aren't listed.
+
+[[app]]
+name = "arkweb-test"
+bundle = "org.openharmonyrs.arkwebtest"
+label = "arkweb-test"
+install = "build and install https://github.com/jschwe/arkweb-test"
+home = { url = "/webview_apps/scroll.html", tab = "Tab 1" }
+start = { page = "webview_apps/scroll.html", parameters = { page = "tabs" } }
+
+[[app.tab]]
+name = "scroll"
+label = "Tab 1"
+url = "/webview_apps/scroll.html"
