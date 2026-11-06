@@ -63,6 +63,7 @@ Fixtures:
 | `hilog` | hilog of the run, streamed from the first test that uses it: `wait_for(regex, since=hilog.mark())` |
 | `proxy` | the mitmproxy instance for `network` tests |
 | `ime` | the test IME, current for the test (`ohos_test_ime.TestIme`); skips without `--test-ime` |
+| `artifacts` | the test's artifacts folder, for screenshots and other files to keep whatever the result |
 
 Pages that load `report.js` can call `report({...})`; tests read the objects with
 `pages.wait_for_report(predicate)`. That works without WebDriver, e.g. for IME scenarios, where
