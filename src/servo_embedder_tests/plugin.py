@@ -66,6 +66,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "servo_prefs(**prefs): Servo preferences for this test's servoshell",
         "servo_args(*args): extra servoshell arguments for this test",
         "platform(*families): run only on these platform families (ohos, desktop)",
+        "explicit: run only when the command line names the test's file or a folder it is in",
     ):
         config.addinivalue_line("markers", marker)
     if getattr(config.option, "platform", None) is None or config.option.collectonly:
@@ -142,6 +143,11 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    if getattr(config.option, "platform", None) is not None:
+        deselected = [item for item in items if item.get_closest_marker("explicit") and not _named(item, config)]
+        if deselected:
+            config.hook.pytest_deselected(items=deselected)
+            items[:] = [item for item in items if item not in deselected]
     if RUN_KEY not in config.stash:
         return
     run = _run(config)
@@ -179,6 +185,16 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         if config.option.test_ime_hap:
             device.install(config.option.test_ime_hap, config.option.test_ime or config.option.bundle)
         run.report.environment.update(device.describe())
+
+
+def _named(item: pytest.Item, config: pytest.Config) -> bool:
+    """Whether the command line names the item's file, or a folder it is in other than the bundled scenarios."""
+    path = Path(item.path).resolve()
+    for arg in config.args:
+        named = (config.invocation_params.dir / arg.split("::", 1)[0]).resolve()
+        if named != BUNDLED_SCENARIOS.resolve() and (named == path or named in path.parents):
+            return True
+    return False
 
 
 def pytest_collection_finish(session: pytest.Session) -> None:
