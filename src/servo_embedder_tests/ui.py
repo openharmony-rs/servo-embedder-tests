@@ -44,6 +44,10 @@ class Node:
         left, top, right, bottom = self.bounds
         return right > left and bottom > top and self.attributes.get("visible", "true") != "false"
 
+    @property
+    def is_selected(self) -> bool:
+        return self.attributes.get("selected") == "true"
+
     def walk(self) -> Iterator[Node]:
         yield self
         for child in self.children:

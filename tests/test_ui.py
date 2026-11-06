@@ -28,3 +28,16 @@ def test_find_by_type_text_and_id():
 def test_webview_is_largest_visible_xcomponent():
     webview = Layout.from_json(TREE).webview()
     assert webview is not None and webview.bounds == (0, 400, 1000, 1900)
+
+
+def test_selected():
+    layout = Layout.from_json(
+        {
+            "attributes": {"type": "TabBar", "bounds": "[0,0][200,100]"},
+            "children": [
+                {"attributes": {"type": "Column", "bounds": "[0,0][100,100]", "selected": "true"}},
+                {"attributes": {"type": "Column", "bounds": "[100,0][200,100]", "selected": "false"}},
+            ],
+        }
+    )
+    assert [item.is_selected for item in layout.root.children] == [True, False]

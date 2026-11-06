@@ -18,6 +18,7 @@ from ohos_test_ime import TestIme
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.remote.webdriver import WebDriver
 
+from .atomic_service import AtomicService
 from .errors import AppCrashed, ScenarioError, ScenarioTimeout
 from .expectations import Expectations, Result, RunReport
 from .pages import PageServer
@@ -265,12 +266,20 @@ def _status(call: pytest.CallInfo[None], item: pytest.Item) -> str:
     return "FAIL"
 
 
-def _is_running(app: Servoshell) -> bool | None:
+def _is_running(app: Servoshell | AtomicService) -> bool | None:
     """Whether `app` is running, or None if that can't be told, e.g. because the device is gone."""
     try:
         return app.is_running()
     except Exception:
         return None
+
+
+def _crashed(service: AtomicService) -> bool:
+    """Whether the service exited or one of its processes crashed; False if that can't be told."""
+    try:
+        return not service.is_running() or bool(service.crashes())
+    except Exception:
+        return False
 
 
 @pytest.hookimpl(wrapper=True)
@@ -305,8 +314,13 @@ def pytest_runtest_makereport(
     if report.when == "teardown" or (report.when == "setup" and report.passed):
         return report
     status = _status(call, item)
-    session = item.funcargs.get("servo") if hasattr(item, "funcargs") else None
-    if status in ("PASS", "FAIL") and isinstance(session, ServoSession) and _is_running(session.app) is False:
+    funcargs = getattr(item, "funcargs", {})
+    session = funcargs.get("servo")
+    services = [value for value in funcargs.values() if isinstance(value, AtomicService)]
+    apps: list[Servoshell | AtomicService] = [session.app] if isinstance(session, ServoSession) else []
+    if status in ("PASS", "FAIL") and any(_is_running(app) is False for app in apps + services):
+        status = "CRASH"
+    elif status in ("FAIL", "TIMEOUT") and any(_crashed(service) for service in services):
         status = "CRASH"
     if status == "SKIP":
         run.report.results[key] = Result(key, "SKIP", expected, str(call.excinfo.value) if call.excinfo else "")
@@ -324,9 +338,11 @@ def pytest_runtest_makereport(
         report.longrepr = f"Unexpected PASS (expected {'/'.join(expected)}): update the expectations"
     elif status == "CRASH" and report.passed:
         report.outcome = "failed"
-        report.longrepr = "servoshell exited during the test"
+        report.longrepr = "the app exited during the test"
     if isinstance(session, ServoSession):
         session.save_artifacts(key)
+    for service in services:
+        service.save_failure()
     return report
 
 
