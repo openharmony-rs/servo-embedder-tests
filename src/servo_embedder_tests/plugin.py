@@ -183,6 +183,14 @@ def pytest_sessionstart(session: pytest.Session) -> None:
         run.report.environment.update(device.describe())
 
 
+def artifacts_dir(run: ScenarioRun, key: str) -> Path:
+    """The artifacts folder of the test `key`, created and marked for removal by the next run."""
+    directory = run.artifacts / re.sub(r"[^A-Za-z0-9._-]+", "_", key)
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+    return directory
+
+
 def _clear_artifacts(directory: Path) -> None:
     """Removes what an earlier run left in `directory`, and nothing else."""
     for name in RUN_ARTIFACTS:
@@ -432,9 +440,7 @@ class ServoSession:
         self.app.stop()
 
     def save_artifacts(self, key: str) -> Path:
-        directory = self.run.artifacts / re.sub(r"[^A-Za-z0-9._-]+", "_", key)
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+        directory = artifacts_dir(self.run, key)
         steps: list[tuple[str, object]] = []
         if isinstance(self.platform, OhosDevice):
             device = self.platform
@@ -486,6 +492,12 @@ def servo(
 @pytest.fixture
 def webdriver(servo: ServoSession) -> WebDriver:
     return servo.driver
+
+
+@pytest.fixture
+def artifacts(request: pytest.FixtureRequest, scenario_run: ScenarioRun) -> Path:
+    """This test's artifacts folder, for screenshots and other files the test keeps whatever its result."""
+    return artifacts_dir(scenario_run, request.node.stash.get(TEST_KEY, request.node.nodeid))
 
 
 @pytest.fixture
