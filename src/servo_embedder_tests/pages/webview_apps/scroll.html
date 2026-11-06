@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scrolling page</title>
+<style>
+  body { margin: 0; font: 18px/1.4 sans-serif; color: #1d1d1f; background: #fafafa; }
+  header { padding: 24px 16px; background: #2457a6; color: #fff; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 0 16px; border-bottom: 1px solid #ddd; }
+  .row:nth-child(3n) { background: #eef1f6; }
+  .swatch { flex: none; border-radius: 8px; }
+  .text { display: flex; flex-direction: column; }
+  .text small { color: #666; }
+</style>
+</head>
+<body>
+<header><h1>Scrolling page</h1><p>Sixty rows to drag through, no two alike, so that a shift can't be mistaken.</p></header>
+<main id="rows"></main>
+<script>
+  // Heights, swatch sizes and positions and text lengths vary from row to row: a regular page would look the same
+  // after a shift by a whole number of rows.
+  const rows = document.getElementById("rows");
+  const words = ["harbour", "lantern", "meadow", "quartz", "violet", "ember", "summit", "willow", "canyon", "orbit"];
+  for (let i = 1; i <= 60; i++) {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.height = `${48 + ((i * 29) % 61)}px`;
+    row.style.paddingLeft = `${16 + ((i * 17) % 90)}px`;
+    const size = 24 + ((i * 13) % 28);
+    const text = Array.from({ length: 1 + ((i * 7) % 5) }, (_, j) => words[(i * 3 + j * 7) % words.length]).join(" ");
+    row.innerHTML = `<div class="swatch" style="width:${size}px;height:${size}px;` +
+      `background:hsl(${(i * 37) % 360},65%,50%)"></div>` +
+      `<div class="text"><strong>Row ${i}</strong><small>${text}</small></div>`;
+    rows.append(row);
+  }
+</script>
+</body>
+</html>
