@@ -178,9 +178,16 @@ def pytest_sessionstart(session: pytest.Session) -> None:
             device.install(config.option.hap, config.option.bundle)
         if config.option.test_ime_hap:
             device.install(config.option.test_ime_hap, config.option.test_ime or config.option.bundle)
-        if not device.is_installed(config.option.bundle):
-            raise pytest.UsageError(f"{config.option.bundle} is not installed on {device.target}; pass --hap")
         run.report.environment.update(device.describe())
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    config = session.config
+    if RUN_KEY not in config.stash or not any("servo" in getattr(item, "fixturenames", ()) for item in session.items):
+        return
+    device = _run(config).platform
+    if isinstance(device, OhosDevice) and not device.is_installed(config.option.bundle):
+        raise pytest.UsageError(f"{config.option.bundle} is not installed on {device.target}; pass --hap")
 
 
 def artifacts_dir(run: ScenarioRun, key: str) -> Path:
