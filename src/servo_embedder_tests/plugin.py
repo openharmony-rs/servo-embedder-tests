@@ -18,8 +18,10 @@ from ohos_test_ime import TestIme
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.remote.webdriver import WebDriver
 
+from .engines import ArkWebEngine, Engine, ServoshellEngine
 from .errors import AppCrashed, ScenarioError, ScenarioTimeout
 from .expectations import Expectations, Result, RunReport
+from .page_scenarios import PageRuns, Renderer
 from .pages import PageServer
 from .platform import DesktopHost, HilogStream, OhosDevice, Platform
 from .proxy import MitmProxy, ProxyMode
@@ -32,7 +34,7 @@ BUNDLED_SCENARIOS = Path(str(resources.files("servo_embedder_tests") / "scenario
 EXPECTED_KEY = pytest.StashKey[list[str]]()
 # Marks a per-test artifacts folder, so that the next run can remove it.
 TEST_ARTIFACTS_MARKER = "test-key.txt"
-RUN_ARTIFACTS = ("results.json", "hilog.txt", "servoshell.log", "mitmproxy.log")
+RUN_ARTIFACTS = ("results.json", "hilog.txt", "servoshell.log", "mitmproxy.log", "chromedriver.log")
 TEST_KEY = pytest.StashKey[str]()
 NEEDS_TEST_IME = "needs a test IME: pass --test-ime <bundle>"
 
@@ -82,7 +84,26 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="start --arkweb-viewer with this `aa start --ps` parameter (repeatable)",
     )
     group.addoption("--references", type=Path, help="reference renderings, in a folder per device (--reference-key)")
-    group.addoption("--reference-key", help="the device's folder in --references (default: the device's name)")
+    group.addoption(
+        "--reference-key", help="the device's folder in --references and --baselines (default: the device's name)"
+    )
+    group.addoption(
+        "--page-scenarios", type=Path, action="append", default=[], help="folder with a subfolder per page scenario"
+    )
+    group.addoption("--engine", default="servoshell", help="engine that renders the page scenarios")
+    group.addoption("--reference-engine", help="engine whose renderings the page scenarios are compared with")
+    group.addoption("--baselines", type=Path, help="stored captures of page scenarios, per device and engine")
+    group.addoption("--update-baselines", action="store_true", help="store this run's captures as the baselines")
+    group.addoption(
+        "--update-references", action="store_true", help="render the references anew even where they are stored"
+    )
+    group.addoption("--chromedriver", type=Path, help="chromedriver matching ArkWeb's Chromium, for the arkweb engine")
+
+
+def pytest_addhooks(pluginmanager: pytest.PytestPluginManager) -> None:
+    from . import hookspecs
+
+    pluginmanager.add_hookspecs(hookspecs)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -413,7 +434,8 @@ def hilog(device: OhosDevice, scenario_run: ScenarioRun) -> Iterator[HilogStream
 
 @pytest.fixture(scope="session")
 def pages(platform: Platform, scenario_run: ScenarioRun) -> Iterator[PageServer]:
-    server = PageServer(scenario_run.config.option.pages_dir).start()
+    options = scenario_run.config.option
+    server = PageServer([*options.pages_dir, *options.page_scenarios]).start()
     platform.reverse(server.port)
     yield server
     server.stop()
@@ -595,14 +617,58 @@ def references(scenario_run: ScenarioRun, platform: Platform, pages: PageServer)
     --arkweb-viewer, which are added to it, or kept with the run's artifacts without --references."""
     options = scenario_run.config.option
     if options.references:
-        name = re.sub(r"[^A-Za-z0-9._-]+", "_", options.reference_key or platform.name())
-        directory = options.references / name
+        directory = options.references / _device_key(scenario_run, platform)
     else:
         directory = artifacts_dir(scenario_run, "references")
     viewer = None
     if options.arkweb_viewer and isinstance(platform, OhosDevice):
         viewer = ArkWebViewer(platform, options.arkweb_viewer, options.arkweb_viewer_ability, options.arkweb_viewer_ps)
     return References(ReferenceStore(directory), viewer, pages)
+
+
+def _device_key(run: ScenarioRun, platform: Platform) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", run.config.option.reference_key or platform.name())
+
+
+def _engines(run: ScenarioRun, platform: Platform) -> dict[str, Engine]:
+    options = run.config.option
+    engines: dict[str, Engine] = {
+        "servoshell": ServoshellEngine.create(
+            platform, options.bundle, options.servo_bin, run.artifacts / "servoshell.log", options.servo_arg
+        )
+    }
+    if options.arkweb_viewer and isinstance(platform, OhosDevice):
+        engines["arkweb"] = ArkWebEngine(
+            platform,
+            options.arkweb_viewer,
+            options.chromedriver,
+            run.artifacts / "chromedriver.log",
+            options.arkweb_viewer_ability,
+            options.arkweb_viewer_ps,
+        )
+    for found in run.config.hook.pytest_servo_embedder_tests_engines(config=run.config, platform=platform):
+        for engine in found:
+            engines[engine.name] = engine
+    return engines
+
+
+@pytest.fixture(scope="session")
+def page_runs(scenario_run: ScenarioRun, platform: Platform, pages: PageServer) -> Iterator[PageRuns]:
+    """The renderings of the page scenarios by --engine and --reference-engine, and the stores in --baselines."""
+    options = scenario_run.config.option
+    runs = PageRuns(
+        _engines(scenario_run, platform),
+        options.engine,
+        options.reference_engine,
+        Renderer(pages),
+        options.baselines,
+        _device_key(scenario_run, platform),
+        lambda name: artifacts_dir(scenario_run, f"page-scenarios/{name}"),
+        options.update_baselines,
+        options.update_references,
+    )
+    yield runs
+    runs.stop()
 
 
 @pytest.fixture

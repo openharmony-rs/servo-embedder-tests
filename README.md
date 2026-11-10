@@ -107,6 +107,121 @@ After a run, `servo-embedder-tests update-expectations <artifacts>/results.json 
 rewrites the file to match, leaving entries and comments in place. `--intermittent` adds statuses instead of
 replacing them.
 
+## Page scenarios
+
+A folder with a subfolder per page, each with its `index.html` and resources, becomes a set of scenarios with
+`--page-scenarios <folder>`. Without test names, `run` then runs only those:
+
+```sh
+# The first run stores what the engine renders as the baselines.
+uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --update-baselines
+# Later runs, e.g. after a Servo update, compare with them.
+uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --expectations genui.toml
+# Also compare with ArkWeb on the same device, through chromedriver over ArkWeb's DevTools socket.
+uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --reference-engine arkweb \
+    --arkweb-viewer <bundle> --chromedriver <chromedriver matching ArkWeb's Chromium>
+# Store a changed rendering, after review, as the new baseline (by default those whose baseline test failed).
+uvx servo-embedder-tests accept servo-embedder-tests-artifacts --baselines genui-baselines --reason "fixes bold"
+```
+
+Each scenario has three tests:
+
+- `test_renders`: the page loads, settles and passes its own checks;
+- `test_matches_baseline`: each capture matches the engine's baseline;
+- `test_matches_reference`: each capture matches the reference engine's.
+
+The page is rendered once per engine for all three. Known differences between engines go into the expectations of
+`test_matches_reference`, so that they don't hide regressions. The captures of each engine are kept in
+`--baselines` under `<device>/<engine>/<scenario>/`; the device is its model, or `--reference-key`. The reference
+engine's captures are expectations like the baselines: with them stored, a run doesn't need the reference engine. It
+renders the missing ones if it has the engine, and `--update-references` renders all anew.
+
+A capture is a screenshot of the web view, taken by the OS the same way for every engine. It's taken after:
+
+- the page loaded, with its images and fonts;
+- no resource has loaded for a while;
+- two screenshots in a row are the same.
+
+If the page keeps changing, the failure names what changes and the elements there. Each capture keeps a DOM
+snapshot: the boxes, text and fonts of the elements with text.
+
+Captures are compared in tiles of 16 CSS px. A tile differs when more than 5% of its pixels differ by more than the
+tolerance, so that a heading in another font fails even on a long page. Engines are compared in CSS pixels with a
+higher tolerance for anti-aliasing. Captures of viewports with other heights or scroll positions are compared where
+they show the same part of the page.
+
+Each comparison test writes `diff.json` with, for each capture:
+
+- the differing regions in the actual capture's viewport, in CSS px;
+- the elements in each region, with their computed fonts;
+- `dom_changes`, the elements whose box or style changed;
+- for baselines, whether each region moved closer to the reference engine's rendering or further from it, a hint
+  whether a change is an improvement.
+
+It also writes `<capture>-compare.png` (expected, actual and the differing pixels) and a crop of each region in
+`regions/`.
+
+`page-scenarios.toml` in the folder sets defaults for all scenarios, `scenario.toml` in a scenario's folder
+overrides them. Changes to the page are opt-in, under `[page]`:
+
+```toml
+segments = 5                  # viewports to capture from the top; "all" scrolls to the end
+segment_height = 0            # CSS px between captures (0: the viewport height); set it to the smaller
+                              # viewport height when engines with different viewports are compared
+mask = [".clock"]             # elements that comparisons ignore
+timeout = 30                  # seconds to load, and for each capture to settle
+
+[page]
+freeze = true                 # a style sheet before the page's own: no CSS animations or transitions
+errors = true                 # a script that records errors, failed resources and console.error
+
+[compare.baseline]            # overrides of the presets: tolerance, tile, tile_share, css
+tile_share = 0.05
+
+[[steps]]                     # instead of the viewport captures
+capture = "initial"
+[[steps]]
+hover = "#buy"                # also click, scroll ("top", "bottom", a number or a selector), wait_for
+[[steps]]
+capture = "hover"
+expect_change = "#buy"        # fails unless the capture differs from the previous one there
+```
+
+The `arkweb` engine and the reference captures take any app as `--arkweb-viewer`, started with its `EntryAbility`
+or `--arkweb-viewer-ability`, and with `--arkweb-viewer-ps NAME VALUE` parameters. The app needs to:
+
+- show `<url>` in an ArkWeb `Web` component when `aa start -a <ability> -b <bundle> -U <url>` cold-starts it, and
+  come to the front when started again while it runs;
+- show the page in the last `Web` of the layout, with nothing over it (toolbars, banners, dialogs, the keyboard),
+  and not move or resize it while it runs: captures are screenshots of the screen, cut to where the layout puts it;
+- load the harness's pages from `http://127.0.0.1:<port>/` (forwarded with hdc): cleartext HTTP, JavaScript on, no
+  proxy of its own;
+- run in one process, which `aa force-stop` ends.
+
+For the `arkweb` engine, ArkWeb must run Chromium, and the app should show a single web view: chromedriver attaches
+through the DevTools socket that `param set web.debug.devtools true` gives every web view, so the app needn't enable
+debugging, but nothing chooses which web view it drives. To compare with another engine, the web view should be as
+wide, in CSS pixels, as that engine's: only the part of the page both show is compared, and other widths lay the
+page out differently.
+
+Engines other than `servoshell` and `arkweb`, e.g. an app whose web view library switches between ArkWeb and Servo,
+come from a plugin, a `conftest.py` or a module passed with `-p`. They need a WebDriver session into the web view
+for navigation, scripts (also asynchronous ones), elements by CSS selector, clicks and pointer moves; screenshots
+come from the OS:
+
+```python
+from servo_embedder_tests.engines import ArkWebEngine
+
+
+class MyAppArkWeb(ArkWebEngine):
+    name = "myapp-arkweb"
+
+
+def pytest_servo_embedder_tests_engines(config, platform):
+    # Engines implement servo_embedder_tests.engines.Engine: open(url) -> WebDriver, screen_box(), describe(), ...
+    return [MyAppArkWeb(platform, "com.example.myapp", config.option.chromedriver, config.option.artifacts / "cd.log")]
+```
+
 ## Writing scenarios
 
 Fixtures:
@@ -121,6 +236,7 @@ Fixtures:
 | `proxy` | the mitmproxy instance for `network` tests |
 | `ime` | the test IME, current for the test (`ohos_test_ime.TestIme`); skips without `--test-ime` |
 | `artifacts` | the test's artifacts folder, for screenshots and other files to keep whatever the result |
+| `page_runs` | renderings of page scenarios by engine (`servo_embedder_tests.page_scenarios.PageRuns`) and their stores |
 
 Pages that load `report.js` can call `report({...})`; tests read the objects with
 `pages.wait_for_report(predicate)`. That works without WebDriver, e.g. for IME scenarios, where
