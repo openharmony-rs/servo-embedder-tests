@@ -14,14 +14,23 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 # (left, top, right, bottom) in CSS pixels of the viewport.
 CssBox = tuple[float, float, float, float]
-# Regions that get a crop for review, the largest first.
+# Regions that get a crop for review and measurements, the largest first.
 MAX_CROPS = 8
 # CSS pixels of context around a region in its crop.
 CROP_MARGIN = 8
+# Crops are enlarged up to this factor, and to at most this width.
+CROP_ZOOM = 4
+CROP_WIDTH = 1024
+# Measurements: how far, in CSS px, to look for an offset that aligns the renderings, and the radius, in CSS px, of the
+# median filter that estimates the background behind text (wider than strokes, so that it keeps gradients only).
+MAX_OFFSET = 6
+BACKGROUND_RADIUS = 10
+# A pixel is ink when its luminance differs from the background by more than this (0-255).
+INK_CONTRAST = 48
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,9 @@ class Region:
     elements: list[dict[str, object]] = field(default_factory=list)
     reference: str | None = None
     crop: str | None = None
+    # Pixel measurements (see `measure`) and what they mean.
+    measured: dict[str, object] | None = None
+    reading: str | None = None
 
 
 @dataclass
@@ -307,11 +319,30 @@ def side_by_side(images: Sequence[tuple[str, Image.Image]], dest: Path, height: 
     return dest
 
 
+def stacked(images: Sequence[tuple[str, Image.Image]], dest: Path) -> Path:
+    """Puts `images`, (label, image) pairs of the same size, below each other under their labels, enlarged so that
+    differences between them are easy to see: up to CROP_ZOOM times, and to at most CROP_WIDTH wide."""
+    width, height = images[0][1].size
+    zoom = max(1, min(CROP_ZOOM, CROP_WIDTH // max(1, width)))
+    label = 16
+    sheet = Image.new("RGB", (width * zoom, len(images) * (height * zoom + label)), "white")
+    draw = ImageDraw.Draw(sheet)
+    for index, (name, image) in enumerate(images):
+        y = index * (height * zoom + label)
+        draw.text((2, y + 2), f"{name} ({zoom}x)", fill="black")
+        sheet.paste(
+            image.convert("RGB").resize((width * zoom, height * zoom), Image.Resampling.LANCZOS), (0, y + label)
+        )
+    sheet.save(dest)
+    return dest
+
+
 def write_review_images(
     expected: Shot, actual: Shot, diff: Diff, overlay: Path, directory: Path, name: str, labels: tuple[str, str]
 ) -> Path:
     """Writes `<name>-compare.png` (expected | actual | differing) and a crop of each of the largest regions to
-    `regions/<name>-<n>.png`, whose paths go into the regions. Returns the compare image."""
+    `regions/<name>-<n>.png` (expected above actual above the differing pixels), whose paths go into the regions.
+    Returns the compare image."""
     common = diff.size
     a, b = expected.load(diff.top, common), actual.load(diff.top, common)
     with Image.open(overlay) as image:
@@ -333,15 +364,126 @@ def write_review_images(
                 min(common[1], bottom + CROP_MARGIN),
             )
         )
-        parts = [(labels[0], a.crop(box)), (labels[1], b.crop(box)), ("differing", marked.crop(box))]
-        height = parts[0][1].height
-        # Small regions are enlarged so that glyphs stay recognizable; large ones are kept below 512 px wide each.
-        target = max(height, 160)
-        target = min(target, 512 * height // max(1, parts[0][1].width))
+        parts = [(labels[0], a.crop(box)), (labels[1], b.crop(box)), ("differing pixels", marked.crop(box))]
         crops.mkdir(exist_ok=True)
-        path = side_by_side(parts, crops / f"{name}-{index}.png", max(target, 16))
+        path = stacked(parts, crops / f"{name}-{index}.png")
         region.crop = str(path.relative_to(directory))
     return compare_path
+
+
+def _mean_difference(a: Image.Image, b: Image.Image) -> float:
+    return ImageStat.Stat(ImageChops.difference(a, b)).mean[0]
+
+
+def _shifted(image: Image.Image, box: tuple[int, int, int, int], dx: int, dy: int) -> Image.Image:
+    return image.crop((box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy))
+
+
+def _best_offset(a: Image.Image, b: Image.Image, search: int, steps: int = 4) -> tuple[float, float, float, float]:
+    """The offset, in pixels, that best aligns `b` onto `a`: whole pixels up to `search`, then 1/`steps` pixels around
+    the best. Returns (dx, dy, mean difference there, mean difference unshifted)."""
+    inner = (search + 1, search + 1, a.width - search - 1, a.height - search - 1)
+    if inner[2] - inner[0] < 4 or inner[3] - inner[1] < 4:
+        unshifted = _mean_difference(a, b)
+        return 0.0, 0.0, unshifted, unshifted
+    reference = a.crop(inner)
+    unshifted = _mean_difference(reference, b.crop(inner))
+    best = (unshifted, 0, 0)
+    for dy in range(-search, search + 1):
+        for dx in range(-search, search + 1):
+            difference = _mean_difference(reference, _shifted(b, inner, dx, dy))
+            if difference < best[0] - 1e-9:
+                best = (difference, dx, dy)
+    size = (a.width * steps, a.height * steps)
+    big_a, big_b = (image.resize(size, Image.Resampling.BICUBIC) for image in (a, b))
+    big_inner = (inner[0] * steps, inner[1] * steps, inner[2] * steps, inner[3] * steps)
+    reference = big_a.crop(big_inner)
+    fine = (float("inf"), 0, 0)
+    for fy in range(-steps + 1, steps):
+        for fx in range(-steps + 1, steps):
+            dx, dy = best[1] * steps + fx, best[2] * steps + fy
+            difference = _mean_difference(reference, _shifted(big_b, big_inner, dx, dy))
+            if difference < fine[0]:
+                fine = (difference, dx, dy)
+    return fine[1] / steps, fine[2] / steps, fine[0], unshifted
+
+
+def _ink(gray: Image.Image, radius: int) -> tuple[int, tuple[int, int, int, int] | None]:
+    """How much the image departs from its background, the median over a window wider than strokes, which keeps
+    gradients but not text, and the bounding box of the ink."""
+    contrast = ImageChops.difference(gray, gray.filter(ImageFilter.MedianFilter(2 * radius + 1)))
+    energy = sum(value * count for value, count in enumerate(contrast.histogram()))
+    return energy, contrast.point(lambda value: 255 if value > INK_CONTRAST else 0).getbbox()
+
+
+def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measurement:
+    """Measures how `actual` differs from `expected` in `region`, with a margin around it."""
+    a, b = expected.load(diff.top, diff.size), actual.load(diff.top, diff.size)
+    if a.size != b.size:
+        a, b = (image.resize(diff.size, Image.Resampling.BOX) for image in (a, b))
+    scale = a.width / diff.size[0]
+    left, top, right, bottom = region.box
+    margin = 4
+    box = (
+        max(0, round((left - margin) * scale)),
+        max(0, round((top - diff.offset - margin) * scale)),
+        min(a.width, round((right + margin) * scale)),
+        min(a.height, round((bottom - diff.offset + margin) * scale)),
+    )
+    gray_a, gray_b = a.crop(box).convert("L"), b.crop(box).convert("L")
+    dx, dy, residual, unshifted = _best_offset(gray_a, gray_b, round(MAX_OFFSET * scale))
+    radius = round(BACKGROUND_RADIUS * scale)
+    (ink_a, box_a), (ink_b, box_b) = _ink(gray_a, radius), _ink(gray_b, radius)
+
+    def width(ink_box: tuple[int, int, int, int] | None) -> float:
+        return round((ink_box[2] - ink_box[0]) / scale, 1) if ink_box else 0.0
+
+    return Measurement(
+        (round(dx / scale, 2), round(dy / scale, 2)),
+        round(residual, 1),
+        round(unshifted, 1),
+        round(ink_b / ink_a, 2) if ink_a else None,
+        (width(box_a), width(box_b)),
+    )
+
+
+@dataclass(frozen=True)
+class Measurement:
+    """How a region differs: `offset`, in CSS px, best aligns the actual rendering onto the expected one, with mean
+    luminance differences (0-255) there and unshifted; `ink` is the actual rendering's ink relative to the expected
+    one's (below 1: thinner or lighter strokes, or fewer marks), `ink_width` the width of the ink in each, in CSS px."""
+
+    offset: tuple[float, float]
+    difference_aligned: float
+    difference_unshifted: float
+    ink: float | None
+    ink_width: tuple[float, float]
+
+    def reading(self) -> str:
+        """What the measurements mean, in words, for an agent that can't see the crops."""
+        dx, dy = self.offset
+        aligned, unshifted, ink = self.difference_aligned, self.difference_unshifted, self.ink
+        before, after = self.ink_width
+        parts = []
+        moved = bool(dx or dy) and aligned <= 8 and aligned <= 0.5 * unshifted
+        if moved:
+            parts.append(f"moved by ({dx:+g}, {dy:+g}) CSS px, otherwise nearly the same")
+        elif unshifted < 3:
+            parts.append("only edge pixels differ: anti-aliasing or a sub-pixel position")
+        changed_ink = ink is not None and abs(ink - 1) >= 0.08
+        if ink is not None and changed_ink:
+            strokes = (
+                "thinner or lighter strokes, or fewer marks" if ink < 1 else "thicker or darker strokes, or more marks"
+            )
+            parts.append(f"{abs(ink - 1):.0%} {'less' if ink < 1 else 'more'} ink: {strokes}")
+        spacing = not moved and abs(after - before) >= 1.5 and not changed_ink
+        if not moved and abs(after - before) >= 1.5:
+            same = " with about the same ink: letter spacing or glyph widths" if spacing else ""
+            parts.append(f"content {abs(after - before):g} CSS px {'wider' if after > before else 'narrower'}{same}")
+        # Spaced-out text can't be aligned as a whole either, so this would point at the wrong cause.
+        if not moved and not spacing and unshifted >= 3 and aligned > 8:
+            parts.append("shapes differ even at the best alignment: glyphs, typeface or content")
+        return "; ".join(parts) or "small differences without a clear pattern"
 
 
 def reference_hint(previous: Shot, current: Shot, reference: Shot, regions: Sequence[Region]) -> None:

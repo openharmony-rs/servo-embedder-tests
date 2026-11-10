@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PROMPT_VERSION = 1
+PROMPT_VERSION = 2
 CATEGORIES = (
     "glyph shapes or font family",
     "font weight or style",
@@ -39,16 +39,22 @@ CATEGORIES = (
     "anti-aliasing only",
     "other",
 )
-INSTRUCTIONS = f"""You compare two renderings of the same web page region for a browser engine test.
-Each image has three panels side by side: "{{expected}}" on the left, "{{actual}}" in the middle, and the differing
-pixels in red on a faded copy of "{{actual}}" on the right, with the region outlined in blue.
-For each region, say concretely what differs between the left and the middle panel (which text, which element,
-how), pick the closest category from: {", ".join(CATEGORIES)}, and judge whether "{{actual}}" looks worse
-("regression"), better ("improvement"), equally good ("neutral") or you can't tell ("unclear") as a rendering of the
-page. Font differences matter: name the visible difference (e.g. bold vs regular, serif vs sans-serif, wider letter
-spacing, different glyphs for the same characters).
-Answer with JSON only: {{{{"regions": [{{{{"region": <number>, "description": "...", "category": "...",
-"verdict": "...", "confidence": "low|medium|high"}}}}]}}}}"""
+INSTRUCTIONS = """You compare two renderings of the same web page region for a browser engine test.
+Each region comes as one image with three rows, all enlarged by the same factor: "EXPECTED" at the top, "ACTUAL" in
+the middle, and at the bottom the pixels that differ, in red on a faded copy of "ACTUAL", with the region outlined in
+blue.
+Before each image you get measurements made on its pixels. Trust them for position, width and the amount of ink:
+"moved by (dx, dy)" means the same content shifted, "only edge pixels differ" means the rows look the same apart from
+anti-aliasing, "less ink" means thinner or lighter strokes or fewer marks. Use the image for what measurements can't
+tell: stroke weight (bold or regular), typeface (handwriting or plain, serif or sans-serif), glyph shapes, missing or
+extra content, colours.
+For each region, compare the top and the middle row item by item, "same" or the difference you see: weight, glyphs,
+spacing, position, colour, content. Don't report differences that neither the image nor the measurements show.
+Then name the main difference, pick the closest category from: CATEGORIES, and judge "ACTUAL" against "EXPECTED":
+"regression" (worse), "improvement" (better), "neutral" (as good, or only anti-aliasing) or "unclear".
+Answer with JSON only: {"regions": [{"region": <number>, "items": {"weight": "...", "glyphs": "...", "spacing": "...",
+"position": "...", "colour": "...", "content": "..."}, "main": "...", "category": "...", "verdict": "...",
+"confidence": "low|medium|high"}]}"""
 
 
 def _setting(option: str | None, *names: str) -> str | None:
@@ -73,8 +79,16 @@ def _image_url(path: Path, max_width: int) -> str:
     return "data:image/png;base64," + base64.b64encode(data).decode()
 
 
-def regions(test: Path, limit: int) -> tuple[list[dict], list[str]]:
-    """The regions with crops in `test`'s diff.json, largest first, and the comparison's labels."""
+def explained(region: dict) -> bool:
+    """Whether the pixel measurements alone explain the region: a shift, anti-aliasing or changed spacing."""
+    parts = (region.get("reading") or "").split("; ")
+    settled = ("moved by", "only edge pixels differ")
+    return bool(parts[0]) and all(part.startswith(settled) or "letter spacing" in part for part in parts)
+
+
+def regions(test: Path, limit: int, everything: bool = False) -> tuple[list[dict], list[dict], list[str]]:
+    """The regions with crops in `test`'s diff.json, largest first, that the measurements don't explain (all of them
+    with `everything`), those they do, and the comparison's labels."""
     report = json.loads((test / "diff.json").read_text())
     found = []
     for name, capture in report["captures"].items():
@@ -82,17 +96,31 @@ def regions(test: Path, limit: int) -> tuple[list[dict], list[str]]:
             if region.get("crop"):
                 found.append({"capture": name, "dom_changes": capture.get("dom_changes", [])[:5], **region})
     found.sort(key=lambda region: region["differing"], reverse=True)
-    return found[:limit], report.get("labels", ["expected", "actual"])
+    settled = [] if everything else [region for region in found if explained(region)]
+    open_ = [region for region in found if region not in settled]
+    return open_[:limit], settled, report.get("labels", ["expected", "actual"])
 
 
-def request_body(test: Path, model: str, limit: int, max_width: int, extra: dict) -> tuple[dict, list[dict]]:
-    selected, labels = regions(test, limit)
-    instructions = INSTRUCTIONS.format(expected=labels[0], actual=labels[1])
+def request_body(
+    test: Path, model: str, limit: int, max_width: int, extra: dict, everything: bool = False
+) -> tuple[dict, list[dict], list[dict]]:
+    selected, settled, labels = regions(test, limit, everything)
+    instructions = (
+        INSTRUCTIONS.replace("CATEGORIES", ", ".join(CATEGORIES))
+        .replace("EXPECTED", labels[0])
+        .replace("ACTUAL", labels[1])
+    )
     content: list[dict] = [{"type": "text", "text": instructions}]
     for number, region in enumerate(selected, 1):
+        measurements = dict(region.get("measured") or {})
+        if not (region.get("reading") or "").startswith("moved"):
+            # The best offset of content that differs in shape means nothing, and models read it as a move.
+            measurements.pop("offset", None)
         context = {
             "capture": region["capture"],
             "box_css_px": region["box"],
+            "measured": region.get("reading"),
+            "measurements": measurements,
             "elements": region.get("elements", []),
             "hint": region.get("reference"),
             "dom_changes_in_capture": region["dom_changes"],
@@ -100,7 +128,7 @@ def request_body(test: Path, model: str, limit: int, max_width: int, extra: dict
         content.append({"type": "text", "text": f"Region {number}: {json.dumps(context, ensure_ascii=False)}"})
         content.append({"type": "image_url", "image_url": {"url": _image_url(test / region["crop"], max_width)}})
     body = {"model": model, "messages": [{"role": "user", "content": content}], **extra}
-    return body, selected
+    return body, selected, settled
 
 
 def _parse(text: str) -> object:
@@ -129,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--extra", type=json.loads, default={}, help="JSON object merged into the request")
     parser.add_argument("--timeout", type=float, default=120)
     parser.add_argument("--dry-run", action="store_true", help="show what would be sent, without images")
+    parser.add_argument(
+        "--all-regions", action="store_true", help="also send regions the measurements explain (shifts, spacing, noise)"
+    )
     options = parser.parse_args(argv)
     base_url = _setting(options.base_url, "SERVO_EMBEDDER_TESTS_VISION_BASE_URL", "OPENAI_BASE_URL")
     model = _setting(options.model, "SERVO_EMBEDDER_TESTS_VISION_MODEL")
@@ -136,11 +167,16 @@ def main(argv: list[str] | None = None) -> int:
     if not (options.test / "diff.json").is_file():
         print(f"error: no diff.json in {options.test}", file=sys.stderr)
         return 2
-    body, selected = request_body(
-        options.test, model or "<model>", options.max_regions, options.max_width, options.extra
+    body, selected, settled = request_body(
+        options.test, model or "<model>", options.max_regions, options.max_width, options.extra, options.all_regions
     )
+    explained_by_measurements = [
+        {"capture": region["capture"], "box": region["box"], "crop": region["crop"], "measured": region["reading"]}
+        for region in settled
+    ]
     if not selected:
-        print(json.dumps({"regions": [], "note": "no differing regions with crops"}))
+        note = "the measurements explain every region" if settled else "no differing regions with crops"
+        print(json.dumps({"regions": [], "explained": explained_by_measurements, "note": note}, ensure_ascii=False))
         return 0
     if options.dry_run:
         for part in body["messages"][0]["content"]:
@@ -175,6 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             if isinstance(item, dict) and isinstance(item.get("region"), int) and 0 < item["region"] <= len(selected):
                 region = selected[item["region"] - 1]
                 item.update(capture=region["capture"], box=region["box"], crop=region["crop"])
+        answer["explained"] = explained_by_measurements
     record = {"request": digest, "model": model, "usage": reply.get("usage"), "answer": answer}
     cache.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps(answer, ensure_ascii=False, indent=2))

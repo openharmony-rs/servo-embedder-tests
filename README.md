@@ -154,13 +154,16 @@ Each comparison test writes `diff.json` with, for each capture:
 
 - the differing regions in the actual capture's viewport, in CSS px;
 - the elements in each region, with their computed fonts;
+- for the largest regions, a `reading` of pixel measurements: moved by how much, only anti-aliasing, wider with
+  the same ink (spacing), less or more ink (stroke weight), or shapes that differ even when aligned;
 - `dom_changes`, the elements whose box or style changed;
 - for baselines, whether each region moved closer to the reference engine's rendering or further from it, a hint
   whether a change is an improvement.
 
 It also writes `<capture>-compare.png` (expected, actual and the differing pixels) and a crop of each region in
-`regions/`. Those crops are what to send to an image-capable model: the skill in `skills/compare-renderings`
-describes how an agent triages a run, and its script asks any OpenAI-compatible endpoint about the regions.
+`regions/`, expected above actual above the differing pixels. Those crops are what to send to an image-capable model
+for what the readings leave open: the skill in `skills/compare-renderings` describes how an agent triages a run, and
+its script asks any OpenAI-compatible endpoint about the regions.
 
 `page-scenarios.toml` in the folder sets defaults for all scenarios, `scenario.toml` in a scenario's folder
 overrides them. Changes to the page are opt-in, under `[page]`:

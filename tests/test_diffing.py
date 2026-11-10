@@ -125,6 +125,32 @@ def test_reference_hint_tells_whether_a_change_moved_toward_the_reference(tmp_pa
     assert diff.regions[0].reference.startswith("further")
 
 
+def _measured(a, b):
+    diff = diffing.compare(a, b, BASELINE)
+    return diffing.measure(a, b, diff, diff.regions[0])
+
+
+def test_measurements_find_a_shift(tmp_path):
+    measurement = _measured(_page(tmp_path / "a.png"), _page(tmp_path / "b.png", shift=1))
+    assert measurement.offset[0] == 0 and abs(measurement.offset[1] - 1) <= 0.5
+    assert measurement.reading().startswith("moved by (+0, +")
+
+
+def test_measurements_see_bolder_strokes(tmp_path):
+    measurement = _measured(_page(tmp_path / "a.png"), _page(tmp_path / "b.png", bold_heading=True))
+    assert measurement.ink > 1.08
+    assert not measurement.reading().startswith("moved")
+    assert "more ink: thicker or darker strokes" in measurement.reading()
+
+
+def test_review_crops_are_stacked(tmp_path):
+    a, b = _page(tmp_path / "a.png"), _page(tmp_path / "b.png", bold_heading=True)
+    diff = diffing.compare(a, b, BASELINE, overlay=tmp_path / "overlay.png")
+    diffing.write_review_images(a, b, diff, tmp_path / "overlay.png", tmp_path, "page-0", ("old", "new"))
+    with Image.open(tmp_path / diff.regions[0].crop) as crop:
+        assert crop.height > crop.width / 3 and crop.width <= diffing.CROP_WIDTH
+
+
 def _element(path, rect, **style):
     return {
         "path": path,
