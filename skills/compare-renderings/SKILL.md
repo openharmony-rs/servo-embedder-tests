@@ -82,10 +82,15 @@ python3 skills/compare-renderings/describe_regions.py <test folder> --max-region
 - **Which model.** On 11 regions with known causes (DAYU200, 2026-11-10, via OpenRouter):
   - `openai/gpt-5.5` got all right, including text replaced by a gradient box and a missing clip shape, at
     $0.01–0.14 per test;
+  - `z-ai/glm-5.3-flashx` got 10, at about $0.003 per test, the same in two runs; `z-ai/glm-5.3-flash` got 9 at
+    a third of that, with one answer that wasn't valid JSON;
   - `deepseek/deepseek-v4.1-flash` got 8, at about $0.004 per test. It was reliable on weight and on what the
     measurements state, but missed missing content and clip shapes, and its answers varied between runs.
 
-  Use a strong model for regions that read "shapes differ", or check its answer against the crop yourself.
+  On 13 regions of pages not used to design the skill, GPT-5.5 and GLM-5.3-flashx both named a colour emoji drawn
+  monochrome and a photo downscaled blurrier; DeepSeek only hinted at them. No model clearly named a missing clip-path
+  corner or a missing synthetic italic, so look at the crops of regions that read "shapes differ" when the answer is
+  vague. Use GLM-5.3-flashx or a stronger model for those regions.
 
 ## 4. Decide, and record it
 
