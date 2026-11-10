@@ -143,6 +143,33 @@ def test_measurements_see_bolder_strokes(tmp_path):
     assert "more ink: thicker or darker strokes" in measurement.reading()
 
 
+def _line(path, spacing=0.0, stretch=1.0, scale=1.5):
+    """One line of text, 480x60 CSS px, with extra letter spacing or glyphs stretched horizontally."""
+    font = ImageFont.load_default(size=round(15 * scale))
+    text = "06:06 to 10:23, 4h17m Order summary"
+    glyphs = Image.new("L", (round(1200 * scale), round(60 * scale)), 255)
+    draw = ImageDraw.Draw(glyphs)
+    x = 0.0
+    for char in text:
+        draw.text((x, 20 * scale), char, font=font, fill=40)
+        x += draw.textlength(char, font=font) + spacing * scale
+    glyphs = glyphs.resize((round(glyphs.width * stretch), glyphs.height), Image.Resampling.LANCZOS)
+    image = Image.new("RGB", (round(480 * scale), round(60 * scale)), "white")
+    image.paste(
+        glyphs.crop((0, 0, image.width - round(16 * scale), image.height)).convert("RGB"), (round(16 * scale), 0)
+    )
+    image.save(path)
+    return Shot(path, (480, 60))
+
+
+def test_letter_spacing_is_told_from_wider_glyphs(tmp_path):
+    base = _line(tmp_path / "base.png")
+    spaced = _measured(base, _line(tmp_path / "spaced.png", spacing=0.3))
+    assert "letter spacing" in spaced.reading() and spaced.pieces_aligned >= 0.6
+    stretched = _measured(base, _line(tmp_path / "stretched.png", stretch=1.04))
+    assert "letter spacing" not in stretched.reading() and "shapes differ" in stretched.reading()
+
+
 def test_review_crops_are_stacked(tmp_path):
     a, b = _page(tmp_path / "a.png"), _page(tmp_path / "b.png", bold_heading=True)
     diff = diffing.compare(a, b, BASELINE, overlay=tmp_path / "overlay.png")

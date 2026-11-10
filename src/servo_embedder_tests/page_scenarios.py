@@ -705,7 +705,7 @@ def compare_captures(
             for region in diff.regions[: diffing.MAX_CROPS]:
                 measurement = diffing.measure(stored.shot, actual.shot, diff, region)
                 region.measured = asdict(measurement)
-                region.reading = measurement.reading()
+                region.reading = measurement.reading(text=any(element.get("text") for element in region.elements))
             if reference and name in reference:
                 diffing.reference_hint(stored.shot, actual.shot, reference[name].shot, diff.regions)
             entry["compare"] = diffing.write_review_images(
