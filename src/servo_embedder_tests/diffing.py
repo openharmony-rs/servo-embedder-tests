@@ -31,6 +31,10 @@ MAX_OFFSET = 6
 BACKGROUND_RADIUS = 10
 # A pixel is ink when its luminance differs from the background by more than this (0-255).
 INK_CONTRAST = 48
+# Strips, in CSS px, that are aligned one by one to tell letter spacing from other glyphs, and how far, in CSS px, each
+# looks around the previous one's offset.
+STRIP = 24
+STRIP_SEARCH = 3
 
 
 @dataclass(frozen=True)
@@ -408,12 +412,55 @@ def _best_offset(a: Image.Image, b: Image.Image, search: int, steps: int = 4) ->
     return fine[1] / steps, fine[2] / steps, fine[0], unshifted
 
 
-def _ink(gray: Image.Image, radius: int) -> tuple[int, tuple[int, int, int, int] | None]:
+def _ink(gray: Image.Image, radius: int) -> tuple[int, int]:
     """How much the image departs from its background, the median over a window wider than strokes, which keeps
-    gradients but not text, and the bounding box of the ink."""
+    gradients but not text, and the horizontal extent of the ink in pixels, between the 2nd and the 98th percentile
+    of its columns, so that stray specks of a textured background don't count."""
     contrast = ImageChops.difference(gray, gray.filter(ImageFilter.MedianFilter(2 * radius + 1)))
     energy = sum(value * count for value, count in enumerate(contrast.histogram()))
-    return energy, contrast.point(lambda value: 255 if value > INK_CONTRAST else 0).getbbox()
+    mask = contrast.point(lambda value: 255 if value > INK_CONTRAST else 0)
+    columns = list(mask.resize((mask.width, 1), Image.Resampling.BOX).tobytes())
+    total = sum(columns)
+    if not total:
+        return energy, 0
+    running, low, high = 0, None, 0
+    for x, value in enumerate(columns):
+        running += value
+        if low is None and running >= 0.02 * total:
+            low = x
+        if running <= 0.98 * total:
+            high = x
+    return energy, max(0, high - (low or 0))
+
+
+def _pieces_aligned(a: Image.Image, b: Image.Image, scale: float) -> float | None:
+    """The share of vertical strips of `b` that match `a` at some small offset of their own. Each strip searches
+    around the previous strip's offset, so that the growing offsets of spaced-out text are found; text in another
+    typeface matches nowhere. None if no strip differs."""
+    strip, window = round(STRIP * scale), round(STRIP_SEARCH * scale)
+    if a.width < strip or a.height < 4:
+        return None
+    pad = round(MAX_OFFSET * 2 * scale)
+    wide_b = Image.new("L", (b.width + 2 * pad, b.height + 4), 255)
+    wide_b.paste(b, (pad, 2))
+    differing = aligned = 0
+    previous = 0
+    for x in range(0, a.width - strip + 1, strip):
+        piece = a.crop((x, 0, x + strip, a.height))
+        if _mean_difference(piece, wide_b.crop((x + pad, 2, x + pad + strip, a.height + 2))) <= 1:
+            continue
+        differing += 1
+        candidates = [
+            (_mean_difference(piece, wide_b.crop((x + pad + dx, 2 + dy, x + pad + dx + strip, a.height + 2 + dy))), dx)
+            for dx in range(previous - window, previous + window + 1)
+            if -pad <= dx <= pad
+            for dy in (-1, 0, 1)
+        ]
+        best, dx = min(candidates)
+        if best <= 4:
+            aligned += 1
+            previous = dx
+    return round(aligned / differing, 2) if differing else None
 
 
 def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measurement:
@@ -433,17 +480,14 @@ def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measure
     gray_a, gray_b = a.crop(box).convert("L"), b.crop(box).convert("L")
     dx, dy, residual, unshifted = _best_offset(gray_a, gray_b, round(MAX_OFFSET * scale))
     radius = round(BACKGROUND_RADIUS * scale)
-    (ink_a, box_a), (ink_b, box_b) = _ink(gray_a, radius), _ink(gray_b, radius)
-
-    def width(ink_box: tuple[int, int, int, int] | None) -> float:
-        return round((ink_box[2] - ink_box[0]) / scale, 1) if ink_box else 0.0
-
+    (ink_a, extent_a), (ink_b, extent_b) = _ink(gray_a, radius), _ink(gray_b, radius)
     return Measurement(
         (round(dx / scale, 2), round(dy / scale, 2)),
         round(residual, 1),
         round(unshifted, 1),
         round(ink_b / ink_a, 2) if ink_a else None,
-        (width(box_a), width(box_b)),
+        (round(extent_a / scale, 1), round(extent_b / scale, 1)),
+        _pieces_aligned(gray_a, gray_b, scale),
     )
 
 
@@ -451,16 +495,19 @@ def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measure
 class Measurement:
     """How a region differs: `offset`, in CSS px, best aligns the actual rendering onto the expected one, with mean
     luminance differences (0-255) there and unshifted; `ink` is the actual rendering's ink relative to the expected
-    one's (below 1: thinner or lighter strokes, or fewer marks), `ink_width` the width of the ink in each, in CSS px."""
+    one's (below 1: thinner or lighter strokes, or fewer marks), `ink_width` the width of the ink in each, in CSS px,
+    and `pieces_aligned` the share of differing strips that match on their own (spacing changes all, glyphs none)."""
 
     offset: tuple[float, float]
     difference_aligned: float
     difference_unshifted: float
     ink: float | None
     ink_width: tuple[float, float]
+    pieces_aligned: float | None = None
 
-    def reading(self) -> str:
-        """What the measurements mean, in words, for an agent that can't see the crops."""
+    def reading(self, text: bool = True) -> str:
+        """What the measurements mean, in words, for an agent that can't see the crops. Without `text` in the region,
+        the width of the ink, e.g. of a textured background, says nothing about spacing or glyphs, and is left out."""
         dx, dy = self.offset
         aligned, unshifted, ink = self.difference_aligned, self.difference_unshifted, self.ink
         before, after = self.ink_width
@@ -476,8 +523,14 @@ class Measurement:
                 "thinner or lighter strokes, or fewer marks" if ink < 1 else "thicker or darker strokes, or more marks"
             )
             parts.append(f"{abs(ink - 1):.0%} {'less' if ink < 1 else 'more'} ink: {strokes}")
-        spacing = not moved and abs(after - before) >= 1.5 and not changed_ink
-        if not moved and abs(after - before) >= 1.5:
+        # Other glyphs or spacing change the width of text by a fraction; more is content that came or went, which
+        # "shapes differ" covers, or a background whose visible part changed.
+        change = abs(after - before)
+        widened = text and not moved and 1.5 <= change <= 0.3 * max(before, after)
+        # A typeface of about the same weight changes the width too; only spaced-out glyphs match piece by piece.
+        pieces = self.pieces_aligned
+        spacing = widened and not changed_ink and pieces is not None and pieces >= 0.6
+        if widened:
             same = " with about the same ink: letter spacing or glyph widths" if spacing else ""
             parts.append(f"content {abs(after - before):g} CSS px {'wider' if after > before else 'narrower'}{same}")
         # Spaced-out text can't be aligned as a whole either, so this would point at the wrong cause.

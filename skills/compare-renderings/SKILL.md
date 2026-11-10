@@ -51,8 +51,9 @@ Also check:
 
 - `rendering.json` `external`: requests to other origins make renderings depend on the network. Fix the page rather
   than the baseline.
-- Two renderings of the same build normally match exactly. A region of a few pixels at an image edge is noise. A
-  region over text is not.
+- Two renderings of the same build normally match exactly, so in a baseline test every reading is a real change,
+  however small: "moved by 1 px" is a layout shift to report, not noise. Only "only edge pixels differ" in a region of
+  a few pixels, e.g. at an image edge, is noise.
 
 ## 3. Ask an image model only for what's left
 
@@ -95,7 +96,12 @@ python3 skills/compare-renderings/describe_regions.py <test folder> --max-region
   ```sh
   servo-embedder-tests accept <artifacts> --baselines <dir> <scenario> --reason "<what changed and why it's right>"
   ```
-- **A known difference from the reference engine:** add an expectation for `test_matches_reference[<scenario>]`
-  (`update-expectations`) with an `issue` link. Don't widen the comparison's tolerance.
+- **A difference from the reference engine** (`test_matches_reference`): it's a Servo bug or a deliberate engine
+  difference, not a regression of the run. Report what differs, as for a regression, and propose an expectation for
+  `test_matches_reference[<scenario>]` (`update-expectations`) with the `issue` link once there is one, so that the
+  test stops failing on it. Don't widen the comparison's tolerance.
+- **When the image model's answer and the measurements disagree,** or the answer is vague ("glyphs differ", "font
+  fallback") for a region that reads "shapes differ", don't build a verdict on it: say so, and point the user at the
+  crop.
 - **Unsettled or flaky:** the page animates or depends on the network. Add a `mask`, `[page] freeze = true` or local
   copies of the resources to the scenario. Don't add a tolerance.
