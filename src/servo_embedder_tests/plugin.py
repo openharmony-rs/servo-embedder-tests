@@ -485,6 +485,20 @@ class ServoSession:
             self._driver = None
         self.app.stop()
 
+    def reuse(self, item: pytest.Item) -> ServoSession:
+        """Makes this the session of the test `item`, (re)starting servoshell unless it already runs."""
+        self.item = item
+        self.hilog_mark = self.hilog.mark() if self.hilog else 0
+        if self._driver is not None and _is_running(self.app):
+            return self
+        try:
+            self.start()
+        except Exception:
+            self.save_artifacts(item.stash.get(TEST_KEY, item.nodeid))
+            self.stop()
+            raise
+        return self
+
     def save_artifacts(self, key: str) -> Path:
         directory = artifacts_dir(self.run, key)
         steps: list[tuple[str, object]] = []
@@ -507,14 +521,7 @@ class ServoSession:
         return directory
 
 
-@pytest.fixture
-def servo(
-    request: pytest.FixtureRequest,
-    scenario_run: ScenarioRun,
-    platform: Platform,
-    _webdriver_forward: int,
-) -> Iterator[ServoSession]:
-    """servoshell started on about:blank with a WebDriver session. Call `servo.start(...)` to relaunch it."""
+def _new_session(request: pytest.FixtureRequest, scenario_run: ScenarioRun, platform: Platform) -> ServoSession:
     proxy = request.getfixturevalue("proxy") if request.node.get_closest_marker("network") else None
     hilog = request.getfixturevalue("hilog") if isinstance(platform, OhosDevice) else None
     if isinstance(platform, OhosDevice):
@@ -524,13 +531,32 @@ def servo(
         app = ServoshellDesktop(
             platform, scenario_run.config.option.servo_bin, scenario_run.artifacts / "servoshell.log"
         )
-    session = ServoSession(scenario_run, app, request.node, hilog, proxy)
-    try:
-        session.start()
-    except Exception:
-        session.save_artifacts(request.node.stash.get(TEST_KEY, request.node.nodeid))
-        session.stop()
-        raise
+    return ServoSession(scenario_run, app, request.node, hilog, proxy)
+
+
+@pytest.fixture
+def servo(
+    request: pytest.FixtureRequest,
+    scenario_run: ScenarioRun,
+    platform: Platform,
+    _webdriver_forward: int,
+) -> Iterator[ServoSession]:
+    """servoshell started on about:blank with a WebDriver session. Call `servo.start(...)` to relaunch it."""
+    session = _new_session(request, scenario_run, platform)
+    yield session.reuse(request.node)
+    session.stop()
+
+
+@pytest.fixture(scope="module")
+def shared_servo(
+    request: pytest.FixtureRequest,
+    scenario_run: ScenarioRun,
+    platform: Platform,
+    _webdriver_forward: int,
+) -> Iterator[ServoSession]:
+    """servoshell shared by the tests of a module, which get it from a `servo` fixture of the module that returns
+    `shared_servo.reuse(request.node)`. It starts with the markers of the test that starts it, so mark the module."""
+    session = _new_session(request, scenario_run, platform)
     yield session
     session.stop()
 
