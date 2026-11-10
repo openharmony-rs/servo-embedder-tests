@@ -67,12 +67,30 @@ def test_one_request_with_the_crops_and_a_cached_answer(tmp_path, monkeypatch, c
     path, authorization, body = _Stub.requests[0]
     assert path == "/v1/chat/completions" and authorization == "Bearer secret" and body["model"] == "vision-model"
     parts = body["messages"][0]["content"]
-    assert '"arkweb" on the left' in parts[0]["text"] and "{expected}" not in parts[0]["text"]
+    assert '"arkweb" at the top' in parts[0]["text"] and "EXPECTED" not in parts[0]["text"]
     images = [part["image_url"]["url"] for part in parts if part["type"] == "image_url"]
     assert len(images) == 2 and all(url.startswith("data:image/png;base64,") for url in images)
     answer = json.loads((folder / "vision.json").read_text())["answer"]
     assert answer["regions"][0]["capture"] == "page-0" and answer["regions"][0]["crop"] == "regions/page-0-0.png"
     assert '"title not bold"' in capsys.readouterr().out
+
+
+def test_regions_the_measurements_explain_are_not_sent(tmp_path, capsys):
+    folder = _test_folder(tmp_path)
+    report = json.loads((folder / "diff.json").read_text())
+    regions = report["captures"]["page-0"]["regions"]
+    regions[0]["reading"] = "moved by (+0, +1.33) CSS px, otherwise nearly the same"
+    regions[1]["reading"] = "content 6 CSS px wider with about the same ink: letter spacing or glyph widths"
+    (folder / "diff.json").write_text(json.dumps(report))
+    assert describe_regions.main([str(folder), "--base-url", "http://127.0.0.1:1", "--model", "m"]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["regions"] == [] and [r["crop"] for r in answer["explained"]] == [
+        "regions/page-0-0.png",
+        "regions/page-0-1.png",
+    ]
+    assert describe_regions.main([str(folder), "--dry-run", "--all-regions"]) == 0
+    body = json.loads(capsys.readouterr().out)
+    assert sum(part["type"] == "image_url" for part in body["messages"][0]["content"]) == 2
 
 
 def test_dry_run_sends_nothing(tmp_path, capsys):

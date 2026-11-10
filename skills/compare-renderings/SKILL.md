@@ -30,6 +30,15 @@ For each capture, `diff.json` gives:
 - **`regions`**: boxes in CSS px of the actual capture's viewport, with pixel counts and `elements`. The elements are
   the smallest with text in the region, with path, text and computed `font_family`, `font_size`, `font_weight`,
   `font_style` and `color`.
+- **`reading`** of the largest regions, from pixel measurements (`measured`: the offset that best aligns the two
+  renderings, the ink of the actual one relative to the expected one, the width of the ink). Trust it, it settles
+  most cases without looking:
+  - "moved by (dx, dy) CSS px, otherwise nearly the same": a layout shift;
+  - "only edge pixels differ": anti-aliasing or a sub-pixel position, usually noise;
+  - "wider/narrower with about the same ink": letter spacing or glyph widths;
+  - "less ink" / "more ink": thinner or thicker strokes (e.g. bold not drawn bold), or fewer or more marks;
+  - "shapes differ even at the best alignment": another typeface, other glyphs or missing content. This one needs
+    eyes (step 3).
 - **`dom_changes`**: elements whose computed style or box changed between the expected and the actual capture's DOM
   snapshot. A style change, or a text box that got wider or narrower, often explains a region outright: another
   fallback font, another weight, changed spacing.
@@ -60,12 +69,22 @@ python3 skills/compare-renderings/describe_regions.py <test folder> --dry-run   
 python3 skills/compare-renderings/describe_regions.py <test folder> --max-regions 4
 ```
 
-- **One request per test.** The script sends the largest `--max-regions` crops, each with the text from
-  `diff.json`, and asks for JSON: per region a description, a category (font family, weight, spacing, layout, missing
-  content, colour, ...), a verdict (regression, improvement, neutral, unclear) and a confidence.
+- **Only what the measurements leave open.** Regions whose reading is a shift, anti-aliasing or spacing are not sent
+  (they're listed under `explained`); a test with only those makes no request. `--all-regions` sends them too.
+- **One request per test.** The script sends the largest `--max-regions` open regions. Each crop shows expected above
+  actual above the differing pixels, enlarged; the reading and the text from `diff.json` go with it. It asks for JSON:
+  per region a checklist (weight, glyphs, spacing, position, colour, content), the main difference, a category, a
+  verdict (regression, improvement, neutral, unclear) and a confidence.
 - **Cached.** The answer goes to `vision.json` in the test folder, keyed by the request, so running it again is free.
 - **Cost.** Keep to the failing tests and the largest regions, and run `--dry-run` first when unsure.
 - **Provider fields.** `--extra '{"max_tokens": 800}'` adds fields some providers want.
+- **Which model.** On 11 regions with known causes (DAYU200, 2026-11-10, via OpenRouter):
+  - `openai/gpt-5.5` got all right, including text replaced by a gradient box and a missing clip shape, at
+    $0.01–0.14 per test;
+  - `deepseek/deepseek-v4.1-flash` got 8, at about $0.004 per test. It was reliable on weight and on what the
+    measurements state, but missed missing content and clip shapes, and its answers varied between runs.
+
+  Use a strong model for regions that read "shapes differ", or check its answer against the crop yourself.
 
 ## 4. Decide, and record it
 

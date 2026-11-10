@@ -17,7 +17,7 @@ import shutil
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw
@@ -702,6 +702,10 @@ def compare_captures(
             elements = actual.elements()
             for region in diff.regions:
                 region.elements = diffing.elements_in(elements, region.box)
+            for region in diff.regions[: diffing.MAX_CROPS]:
+                measurement = diffing.measure(stored.shot, actual.shot, diff, region)
+                region.measured = asdict(measurement)
+                region.reading = measurement.reading()
             if reference and name in reference:
                 diffing.reference_hint(stored.shot, actual.shot, reference[name].shot, diff.regions)
             entry["compare"] = diffing.write_review_images(
