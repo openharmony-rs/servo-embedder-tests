@@ -35,13 +35,16 @@ class ServoshellOhos:
         webdriver_port: int | None,
         prefs: Mapping[str, PrefValue] = {},
         args: Sequence[str] = (),
+        parameters: Sequence[tuple[str, str]] = (),
     ) -> None:
+        """`parameters` are name-value pairs passed as `--ps name value`, for apps other than servoshell."""
         flags = list(args) + [pref_arg(name, value) for name, value in prefs.items()]
         if webdriver_port is not None:
             flags.insert(0, f"--webdriver={webdriver_port}")
         # `--psn=` passes one token; servoshell's EntryAbility turns it back into a command-line flag.
         parts = ["aa", "start", "-a", self.ability, "-b", self.bundle, "-U", url]
         parts += [f"--psn={flag}" for flag in flags]
+        parts += [part for name, value in parameters for part in ("--ps", name, value)]
         command = shlex.join(parts)
         output = self.device.shell(command)
         if "successfully" not in output:

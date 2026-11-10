@@ -23,6 +23,7 @@ from .expectations import Expectations, Result, RunReport
 from .pages import PageServer
 from .platform import DesktopHost, HilogStream, OhosDevice, Platform
 from .proxy import MitmProxy, ProxyMode
+from .references import ArkWebViewer, References, ReferenceStore
 from .servoshell import PrefValue, Servoshell, ServoshellDesktop, ServoshellOhos
 from .webdriver import connect
 from .webview_app import WebViewApp
@@ -66,6 +67,22 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--test-ime-hap", type=Path, help="install this test IME HAP before the run")
     group.addoption("--test-ime-port", type=int, default=8971, help="the test IME's control port on the device")
     group.addoption("--scenario-timeout", type=float, default=300, help="per-test timeout in seconds (0: none)")
+    group.addoption(
+        "--arkweb-viewer",
+        metavar="BUNDLE",
+        help="installed app that shows `aa start -U <url>` with ArkWeb; captures the references --references lacks",
+    )
+    group.addoption("--arkweb-viewer-ability", default="EntryAbility", help="the --arkweb-viewer ability to start")
+    group.addoption(
+        "--arkweb-viewer-ps",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("NAME", "VALUE"),
+        help="start --arkweb-viewer with this `aa start --ps` parameter (repeatable)",
+    )
+    group.addoption("--references", type=Path, help="reference renderings, in a folder per device (--reference-key)")
+    group.addoption("--reference-key", help="the device's folder in --references (default: the device's name)")
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -570,6 +587,22 @@ def webdriver(servo: ServoSession) -> WebDriver:
 def artifacts(request: pytest.FixtureRequest, scenario_run: ScenarioRun) -> Path:
     """This test's artifacts folder, for screenshots and other files the test keeps whatever its result."""
     return artifacts_dir(scenario_run, request.node.stash.get(TEST_KEY, request.node.nodeid))
+
+
+@pytest.fixture(scope="session")
+def references(scenario_run: ScenarioRun, platform: Platform, pages: PageServer) -> References:
+    """Reference renderings by ArkWeb: those in the device's folder of --references, and those captured with
+    --arkweb-viewer, which are added to it, or kept with the run's artifacts without --references."""
+    options = scenario_run.config.option
+    if options.references:
+        name = re.sub(r"[^A-Za-z0-9._-]+", "_", options.reference_key or platform.name())
+        directory = options.references / name
+    else:
+        directory = artifacts_dir(scenario_run, "references")
+    viewer = None
+    if options.arkweb_viewer and isinstance(platform, OhosDevice):
+        viewer = ArkWebViewer(platform, options.arkweb_viewer, options.arkweb_viewer_ability, options.arkweb_viewer_ps)
+    return References(ReferenceStore(directory), viewer, pages)
 
 
 @pytest.fixture

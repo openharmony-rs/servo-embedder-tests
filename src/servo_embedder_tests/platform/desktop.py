@@ -22,6 +22,9 @@ class DesktopHost:
             return "windows"
         return sys.platform
 
+    def name(self) -> str:
+        return self.device_class()
+
     def describe(self) -> dict[str, str | None]:
         return {"os": sys.platform}
 

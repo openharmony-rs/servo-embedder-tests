@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageDraw, ImageStat
@@ -65,6 +66,40 @@ def _matching_rows(before: Image.Image, after: Image.Image, shift: int, textured
     current = after.crop((0, end, width, end + rows))
     diffs = ImageChops.difference(moved, current).resize((1, rows), Image.Resampling.BOX).tobytes()
     return {end + y for y, diff in enumerate(diffs) if diff <= ROW_MATCH and textured[start + y]}
+
+
+@dataclass(frozen=True)
+class Comparison:
+    """How a rendering differs from a reference rendering of the same content, in CSS pixels."""
+
+    pixels: int
+    differing: int
+    max_difference: int
+
+    @property
+    def ratio(self) -> float:
+        return self.differing / self.pixels if self.pixels else 0.0
+
+
+def compare(test: Path, reference: Path, size: tuple[int, int], tolerance: int, diff: Path | None = None) -> Comparison:
+    """Compares two renderings of content `size` CSS pixels large, whatever their device pixel ratios.
+
+    Both are scaled to `size` first, so that where two engines anti-alias an edge differently, the difference mostly
+    averages out. A pixel differs if one of its channels differs by more than `tolerance` (0-255). `diff` gets the test
+    rendering, faded, with the differing pixels in red.
+    """
+    with Image.open(test) as a, Image.open(reference) as b:
+        a, b = (image.convert("RGB").resize(size, Image.Resampling.BOX) for image in (a, b))
+    channels = ImageChops.difference(a, b).split()
+    largest = channels[0]
+    for channel in channels[1:]:
+        largest = ImageChops.lighter(largest, channel)
+    mask = largest.point(lambda value: 255 if value > tolerance else 0)
+    if diff is not None:
+        faded = Image.blend(a, Image.new("RGB", size, "white"), 0.7)
+        faded.paste(Image.new("RGB", size, (255, 0, 0)), mask=mask)
+        faded.save(diff)
+    return Comparison(size[0] * size[1], mask.histogram()[255], largest.getextrema()[1])
 
 
 def contact_sheet(steps: list[tuple[str, Path]], dest: Path, width: int = 270) -> Path:
