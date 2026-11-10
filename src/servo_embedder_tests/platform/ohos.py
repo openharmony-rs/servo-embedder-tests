@@ -75,6 +75,13 @@ class OhosDevice:
             return "openharmony-emulator"
         return "openharmony"
 
+    def name(self) -> str:
+        """The device's model, or its hardware on boards that keep OpenHarmony's default model name, e.g. rk3568."""
+        model = self.param("const.product.model")
+        if model in (None, "ohos"):
+            model = self.param("ohos.boot.hardware")
+        return model or self.target
+
     def describe(self) -> dict[str, str | None]:
         return {
             "os": self.param("const.ohos.fullname"),
@@ -144,12 +151,18 @@ class OhosDevice:
         self.shell(f"uitest uiInput keyEvent {shlex.quote(name)}")
 
     def screenshot(self, dest: Path) -> Path:
-        device_path = f"{DEVICE_TMP}/servo-embedder-tests-screen.jpeg"
-        self.shell(f"rm -f {device_path}; snapshot_display -f {device_path}")
+        """A screenshot as JPEG, or as PNG if `dest` ends with `.png`, which is lossless but slower."""
+        if dest.suffix == ".png":
+            device_path = f"{DEVICE_TMP}/servo-embedder-tests-screen.png"
+            command = f"rm -f {device_path}; uitest screenCap -p {device_path}"
+        else:
+            device_path = f"{DEVICE_TMP}/servo-embedder-tests-screen.jpeg"
+            command = f"rm -f {device_path}; snapshot_display -f {device_path}"
+        self.shell(command)
         dest.unlink(missing_ok=True)
         self.hdc("file", "recv", device_path, str(dest))
         if not dest.is_file():
-            raise ScenarioError("snapshot_display produced no screenshot")
+            raise ScenarioError(f"`{command.split('; ', 1)[1]}` produced no screenshot")
         return dest
 
     def dump_layout(self, dest: Path | None = None) -> Layout:
