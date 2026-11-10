@@ -118,6 +118,37 @@ def test_device_loss_keeps_results(pytester, monkeypatch):
     assert data["results"]["test_fake.py::test_fail"]["message"].startswith("AssertionError: broken")
 
 
+def test_plugins_add_and_replace_engines(pytester):
+    pytester.makeconftest(
+        textwrap.dedent(
+            """
+            from servo_embedder_tests.engines import ServoshellEngine
+
+            class Fake(ServoshellEngine):
+                def __init__(self, name):
+                    self.name = name
+
+            def pytest_servo_embedder_tests_engines(config, platform):
+                return [Fake("webview-servo"), Fake("servoshell")]
+            """
+        )
+    )
+    pytester.makepyfile(
+        test_fake=textwrap.dedent(
+            """
+            def test_engines(page_runs):
+                assert sorted(page_runs.engines) == ["servoshell", "webview-servo"]
+                assert type(page_runs.engines["servoshell"]).__name__ == "Fake"
+                assert page_runs.engine == "webview-servo" and page_runs.reference == "servoshell"
+            """
+        )
+    )
+    result = pytester.runpytest(
+        "--platform", "desktop", "--artifacts", "out", "--engine", "webview-servo", "--reference-engine", "servoshell"
+    )
+    result.assert_outcomes(passed=1)
+
+
 def test_tests_without_test_ime_skip_before_servoshell_starts(pytester):
     pytester.makeconftest(
         textwrap.dedent(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import subprocess
 import sys
@@ -13,6 +14,7 @@ import pytest
 
 from . import __version__
 from .expectations import Expectations, RunReport, update
+from .page_scenarios import Capture, CaptureStore, Rendering
 from .plugin import BUNDLED_SCENARIOS
 
 
@@ -37,6 +39,8 @@ class _Selection:
     def pytest_configure(self, config: pytest.Config) -> None:
         if config.args_source == pytest.Config.ArgsSource.ARGS:
             args = [_bundled(arg) or arg for arg in config.args]
+        elif config.getoption("page_scenarios", None):
+            args = [str(BUNDLED_SCENARIOS / "page_scenarios")]
         else:
             args = [str(BUNDLED_SCENARIOS)]
         config.args = args + self.extra
@@ -133,6 +137,58 @@ def _update_expectations(argv: Sequence[str]) -> int:
     return 0
 
 
+BASELINE_TEST = "page_scenarios/test_pages.py::test_matches_baseline["
+
+
+def _accept(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="servo-embedder-tests accept",
+        description="Store the captures of page scenarios from a run as their baselines. Without scenario names, "
+        "those whose baseline test failed.",
+    )
+    parser.add_argument("artifacts", type=Path, help="the run's --artifacts folder")
+    parser.add_argument("scenarios", nargs="*", help="scenario names (default: the failed ones)")
+    parser.add_argument("--baselines", type=Path, required=True)
+    parser.add_argument("--engine", default="servoshell", help="the engine whose captures to store")
+    parser.add_argument("--reason", help="why the new rendering is right, kept with the baseline")
+    options = parser.parse_args(argv)
+    renderings = {}
+    for path in sorted(options.artifacts.glob("*/rendering.json")):
+        data = json.loads(path.read_text())
+        if data["engine"] == options.engine:
+            renderings[data["scenario"]] = (path.parent, data)
+    selected = list(options.scenarios)
+    if not selected:
+        report = RunReport.from_file(options.artifacts / "results.json")
+        selected = [
+            key[len(BASELINE_TEST) : -1]
+            for key, result in report.results.items()
+            if key.startswith(BASELINE_TEST) and result.status == "FAIL"
+        ]
+    missing = [name for name in selected if name not in renderings]
+    if missing:
+        print(f"error: no {options.engine} rendering of {', '.join(missing)} in {options.artifacts}")
+        return 1
+    for name in selected:
+        directory, data = renderings[name]
+        if data["error"]:
+            print(f"error: the rendering of {name} failed ({data['error']}); not storing it")
+            return 1
+        rendering = Rendering(
+            data["engine"],
+            name,
+            directory,
+            {capture: Capture.from_meta(capture, directory, meta) for capture, meta in data["captures"].items()},
+            data["info"],
+        )
+        store = CaptureStore(options.baselines, data["device"], options.engine)
+        store.put(rendering, options.reason)
+        print(f"stored {len(rendering.captures)} capture(s) of {name} in {store.directory(name)}")
+    if not selected:
+        print("nothing to accept")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     commands = {
@@ -140,6 +196,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "list": "list the scenarios that `run` would run",
         "doctor": "check hdc, the device and the app",
         "update-expectations": "rewrite expectations from results.json files",
+        "accept": "store page scenario captures of a run as baselines: accept ARTIFACTS --baselines DIR",
         "record-dump": "record a mitmproxy dump of the network scenarios: record-dump PATH [run options]",
     }
     if not argv or argv[0] in ("-h", "--help") or argv[0] not in commands:
@@ -159,6 +216,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor(rest)
     if command == "update-expectations":
         return _update_expectations(rest)
+    if command == "accept":
+        return _accept(rest)
     if not rest:
         print("usage: servo-embedder-tests record-dump PATH [run options]")
         return 2

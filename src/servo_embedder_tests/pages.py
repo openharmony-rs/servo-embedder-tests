@@ -5,6 +5,7 @@ from __future__ import annotations
 import http.server
 import json
 import mimetypes
+import re
 import socket
 import threading
 import time
@@ -42,9 +43,12 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
             return
         content_type = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+        body = file.read_bytes()
+        if content_type == "text/html":
+            body = self.scenario_server.inject(path, body)
         if content_type.startswith("text/") or content_type in ("application/javascript", "application/json"):
             content_type += "; charset=utf-8"
-        self._send(200, file.read_bytes(), content_type)
+        self._send(200, body, content_type)
 
     def do_POST(self) -> None:  # noqa: N802
         path = urllib.parse.urlsplit(self.path).path
@@ -84,6 +88,17 @@ class _Server(http.server.ThreadingHTTPServer):
         self.requests: list[str] = []
         self.reports: list[dict] = []
         self.condition = threading.Condition()
+        self.injections: list[tuple[str, bytes]] = []
+
+    def inject(self, path: str, body: bytes) -> bytes:
+        """`body` with the snippets for `path` inserted at the start of its `<head>`."""
+        snippets = b"".join(snippet for prefix, snippet in self.injections if path.startswith(prefix))
+        if not snippets:
+            return body
+        for tag in (rb"<head\b[^>]*>", rb"<html\b[^>]*>", rb"<!doctype[^>]*>"):
+            if m := re.search(tag, body, re.IGNORECASE):
+                return body[: m.end()] + snippets + body[m.end() :]
+        return snippets + body
 
     def find(self, path: str) -> Path | None:
         relative = urllib.parse.unquote(path).lstrip("/") or "index.html"
@@ -119,6 +134,10 @@ class PageServer:
         path = "/" + path.lstrip("/")
         self._server.dynamic[path] = (html.encode(), content_type)
         return self.url(path)
+
+    def inject(self, prefix: str, html: str) -> None:
+        """Inserts `html` at the start of the `<head>` of the HTML files served under `prefix`."""
+        self._server.injections.append((prefix, html.encode()))
 
     @property
     def requests(self) -> list[str]:
