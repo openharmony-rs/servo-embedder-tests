@@ -18,6 +18,7 @@ from servo_embedder_tests.page_scenarios import (
 )
 from servo_embedder_tests.pages import PageServer
 from servo_embedder_tests.platform import OhosDevice
+from servo_embedder_tests.plugin import TEST_ARTIFACTS_MARKER
 
 
 def _scenarios(tmp_path, suite="", **scenarios):
@@ -45,7 +46,7 @@ def test_discover_merges_suite_defaults_and_scenario_overrides(tmp_path):
     assert [menu.name, order.name] == ["menu", "order"]
     assert menu.steps[0].options == {"segments": "all"} and order.steps[0].options == {"segments": 2}
     assert menu.masks == [".clock"] and menu.page_option("freeze") and not menu.page_option("errors")
-    assert menu.preset("baseline").tolerance == 4 and order.preset("baseline").tolerance == 24
+    assert menu.preset("baseline").tolerance == 4 and order.preset("baseline").tolerance == 12
     assert menu.url_path == "menu/index.html"
 
 
@@ -90,12 +91,16 @@ def test_the_error_script_is_injected_only_under_its_prefix(tmp_path):
     assert "__servoEmbedderTestsErrors" not in order
 
 
-def _rendering(directory, engine="servoshell", heading="Menu", device="rk3568"):
+def _rendering(directory, engine="servoshell", heading="Menu", device="rk3568", photo=None):
     directory.mkdir(parents=True, exist_ok=True)
     image = Image.new("RGB", (480, 300), "white")
     ImageDraw.Draw(image).text((20, 20), heading, fill="black", font_size=28)
+    if photo == "loaded":
+        ImageDraw.Draw(image).rectangle((20, 100, 220, 220), fill=(40, 120, 200))
     image.save(directory / "page-0.png")
     dom = [{"path": "body>h1", "text": heading, "rect": [20, 20, 120, 34], "font_weight": "400"}]
+    if photo:
+        dom.append({"path": "body>img", "text": "", "rect": [20, 100, 200, 120], "image": photo, "src": "/menu/a.jpg"})
     (directory / "page-0.dom.json").write_text(json.dumps(dom))
     capture = Capture("page-0", directory / "page-0.png", directory / "page-0.dom.json", (480, 300), (0, 0), [])
     rendering = Rendering(engine, "menu", directory, {"page-0": capture}, {"engine": {"engine": engine}})
@@ -127,6 +132,41 @@ def store_preset():
     from servo_embedder_tests.diffing import BASELINE
 
     return BASELINE
+
+
+def test_a_region_names_the_image_that_did_not_load(tmp_path):
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old", photo="loaded"))
+    changed = compare_captures(
+        store.captures("menu"), _rendering(tmp_path / "new", photo="broken"), store_preset(), tmp_path / "b", ("a", "b")
+    )
+    entry = changed.report["captures"]["page-0"]
+    assert entry["regions"][0]["reading"].startswith("image /menu/a.jpg did not load in b; ")
+    assert entry["dom_changes"][0]["image"] == ["loaded", "broken"]
+
+
+def test_the_report_shows_differences_with_the_triage(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old"))
+    rendering = _rendering(artifacts / "page-scenarios_servoshell_menu", heading="Menu!")
+    key = f"{cli.BASELINE_TEST}menu]"
+    folder = artifacts / "baseline-menu"
+    folder.mkdir()
+    (folder / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+    compare_captures(store.captures("menu"), rendering, store_preset(), folder, ("baseline", "servoshell"))
+    answer = {"crop": "regions/page-0-0.png", "main": "an exclamation mark <added>", "verdict": "neutral"}
+    (folder / "vision.json").write_text(json.dumps({"model": "m", "answer": {"regions": [answer]}}))
+    triage = {"agent": "a", "verdict": "intended", "summary": "new heading", "regions": {"page-0-0": "added text"}}
+    (folder / "triage.json").write_text(json.dumps(triage))
+    result = {"key": key, "status": "FAIL", "expected": ["PASS"], "message": "1 capture(s) differ"}
+    (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": {key: result}}))
+    assert cli.main(["report", str(artifacts)]) == 0
+    page = (artifacts / "report.html").read_text()
+    assert 'src="baseline-menu/page-0-expected.png"' in page and 'class="box"' in page
+    assert "an exclamation mark &lt;added&gt;" in page and "added text" in page and "new heading" in page
+    assert '<span class="status FAIL unexpected">' in page
+    assert cli.main(["report", str(tmp_path / "baselines")]) == 1
 
 
 def test_accept_stores_the_failed_scenarios(tmp_path, capsys):

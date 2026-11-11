@@ -35,6 +35,9 @@ INK_CONTRAST = 48
 # looks around the previous one's offset.
 STRIP = 24
 STRIP_SEARCH = 3
+# Edge detector output above which a pixel is on an edge. Anti-aliasing changes pixels on edges both renderings have;
+# on the DAYU200, 69-100% of the differing pixels of such regions, against 2-14% for a missing texture or picture.
+EDGE_CONTRAST = 24
 
 
 @dataclass(frozen=True)
@@ -57,9 +60,10 @@ class Preset:
 
 
 # The same engine on the same device: renderings should be equal but for noise. Measured on a DAYU200 (DPR 1.5, tiles
-# of 576 px) over 80 captures of GenUI pages: the largest tile differed in 12 pixels (a 1 px image edge), while one
-# element in another font family, with letter-spacing 0.3px or moved by 1 px gave tiles of 131 pixels or more.
-BASELINE = Preset(tolerance=24, tile=16, tile_share=0.05, css=False)
+# of 576 px) over 133 captures of GenUI pages: the largest tile differed in 18 pixels at tolerance 12 (a 1 px image
+# edge), while one element in another font family, with letter-spacing 0.3px or moved by 1 px gave tiles of 131 pixels
+# or more. A faint background texture that went missing changed pixels by up to 17, hence not a higher tolerance.
+BASELINE = Preset(tolerance=12, tile=16, tile_share=0.05, css=False)
 # Different engines: anti-aliasing and rasterization differ everywhere, so only clear differences count.
 REFERENCE = Preset(tolerance=48, tile=16, tile_share=0.05, css=True)
 
@@ -343,12 +347,15 @@ def stacked(images: Sequence[tuple[str, Image.Image]], dest: Path) -> Path:
 
 def write_review_images(
     expected: Shot, actual: Shot, diff: Diff, overlay: Path, directory: Path, name: str, labels: tuple[str, str]
-) -> Path:
-    """Writes `<name>-compare.png` (expected | actual | differing) and a crop of each of the largest regions to
-    `regions/<name>-<n>.png` (expected above actual above the differing pixels), whose paths go into the regions.
-    Returns the compare image."""
+) -> dict[str, str]:
+    """Writes the compared part of each capture, at its own resolution, to `<name>-expected.png` and
+    `<name>-actual.png`, `<name>-compare.png` (expected | actual | differing) and a crop of each of the largest regions
+    to `regions/<name>-<n>.png` (expected above actual above the differing pixels), whose paths go into the regions.
+    Returns the names of the images by what they show, the overlay of differing pixels included."""
     common = diff.size
     a, b = expected.load(diff.top, common), actual.load(diff.top, common)
+    a.save(directory / f"{name}-expected.png")
+    b.save(directory / f"{name}-actual.png")
     with Image.open(overlay) as image:
         marked = image.convert("RGB")
     a, b = (image.resize(marked.size, Image.Resampling.BOX) if image.size != marked.size else image for image in (a, b))
@@ -372,7 +379,12 @@ def write_review_images(
         crops.mkdir(exist_ok=True)
         path = stacked(parts, crops / f"{name}-{index}.png")
         region.crop = str(path.relative_to(directory))
-    return compare_path
+    return {
+        "compare": compare_path.name,
+        "expected": f"{name}-expected.png",
+        "actual": f"{name}-actual.png",
+        "differing": overlay.name,
+    }
 
 
 def _mean_difference(a: Image.Image, b: Image.Image) -> float:
@@ -463,6 +475,21 @@ def _pieces_aligned(a: Image.Image, b: Image.Image, scale: float) -> float | Non
     return round(aligned / differing, 2) if differing else None
 
 
+def _on_shared_edges(a: Image.Image, b: Image.Image) -> float | None:
+    """The share of the pixels that differ by more than a few levels that lie on, or next to, an edge both images
+    have. None if none differ."""
+    differing = ImageChops.difference(a, b).point(lambda value: 255 if value > 4 else 0)
+    edges = [
+        image.filter(ImageFilter.FIND_EDGES)
+        .point(lambda value: 255 if value > EDGE_CONTRAST else 0)
+        .filter(ImageFilter.MaxFilter(3))
+        for image in (a, b)
+    ]
+    total = differing.histogram()[255]
+    shared = ImageChops.multiply(differing, ImageChops.multiply(*edges)).histogram()[255]
+    return round(shared / total, 2) if total else None
+
+
 def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measurement:
     """Measures how `actual` differs from `expected` in `region`, with a margin around it."""
     a, b = expected.load(diff.top, diff.size), actual.load(diff.top, diff.size)
@@ -488,6 +515,7 @@ def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measure
         round(ink_b / ink_a, 2) if ink_a else None,
         (round(extent_a / scale, 1), round(extent_b / scale, 1)),
         _pieces_aligned(gray_a, gray_b, scale),
+        _on_shared_edges(gray_a, gray_b),
     )
 
 
@@ -496,7 +524,8 @@ class Measurement:
     """How a region differs: `offset`, in CSS px, best aligns the actual rendering onto the expected one, with mean
     luminance differences (0-255) there and unshifted; `ink` is the actual rendering's ink relative to the expected
     one's (below 1: thinner or lighter strokes, or fewer marks), `ink_width` the width of the ink in each, in CSS px,
-    and `pieces_aligned` the share of differing strips that match on their own (spacing changes all, glyphs none)."""
+    `pieces_aligned` the share of differing strips that match on their own (spacing changes all, glyphs none) and
+    `on_edges` the share of differing pixels on edges both renderings have (anti-aliasing: most)."""
 
     offset: tuple[float, float]
     difference_aligned: float
@@ -504,6 +533,7 @@ class Measurement:
     ink: float | None
     ink_width: tuple[float, float]
     pieces_aligned: float | None = None
+    on_edges: float | None = None
 
     def reading(self, text: bool = True) -> str:
         """What the measurements mean, in words, for an agent that can't see the crops. Without `text` in the region,
@@ -515,13 +545,20 @@ class Measurement:
         moved = bool(dx or dy) and aligned <= 8 and aligned <= 0.5 * unshifted
         if moved:
             parts.append(f"moved by ({dx:+g}, {dy:+g}) CSS px, otherwise nearly the same")
-        elif unshifted < 3:
+        elif unshifted < 3 and (self.on_edges is None or self.on_edges >= 0.5):
             parts.append("only edge pixels differ: anti-aliasing or a sub-pixel position")
+        elif unshifted < 3:
+            parts.append("faint differences away from shared edges: a texture, shading or background image changed")
         changed_ink = ink is not None and abs(ink - 1) >= 0.08
         if ink is not None and changed_ink:
-            strokes = (
-                "thinner or lighter strokes, or fewer marks" if ink < 1 else "thicker or darker strokes, or more marks"
-            )
+            if ink <= 0.5:
+                strokes = "content missing, or much fainter"
+            elif ink >= 2:
+                strokes = "content added, or much bolder"
+            elif ink < 1:
+                strokes = "thinner or lighter strokes, or fewer marks"
+            else:
+                strokes = "thicker or darker strokes, or more marks"
             parts.append(f"{abs(ink - 1):.0%} {'less' if ink < 1 else 'more'} ink: {strokes}")
         # Other glyphs or spacing change the width of text by a fraction; more is content that came or went, which
         # "shapes differ" covers, or a background whose visible part changed.
@@ -597,13 +634,15 @@ def elements_in(elements: Sequence[dict[str, object]], box: CssBox, limit: int =
 
 
 def _short(element: dict[str, object]) -> dict[str, object]:
-    return {key: element[key] for key in ("path", "text", "rect", *STYLE_KEYS) if element.get(key) not in (None, "")}
+    keys = ("path", "text", "rect", *STYLE_KEYS, "image", "src")
+    return {key: element[key] for key in keys if element.get(key) not in (None, "")}
 
 
 def dom_changes(
     before: Sequence[dict[str, object]], after: Sequence[dict[str, object]], limit: int = 40
 ) -> list[dict[str, object]]:
-    """Elements whose box or style differs between two DOM snapshots, matched by path, style changes first."""
+    """Elements whose box, style or image load state differs between two DOM snapshots, matched by path, style and
+    image changes first."""
     earlier = {str(e["path"]): e for e in before}
     changes = []
     for element in after:
@@ -611,14 +650,18 @@ def dom_changes(
         if old is None:
             continue
         style = {key: [old.get(key), element.get(key)] for key in STYLE_KEYS if old.get(key) != element.get(key)}
+        image = old.get("image") is not None and old.get("image") != element.get("image")
         moved = max(abs(a - b) for a, b in zip(old["rect"], element["rect"], strict=True))  # type: ignore[call-overload]
-        if style or moved > 0.5:
+        if style or image or moved > 0.5:
             change: dict[str, object] = {"path": element["path"], "text": element.get("text", "")}
             if style:
                 change["style"] = style
+            if image:
+                change["image"] = [old.get("image"), element.get("image")]
+                change["src"] = element.get("src")
             if moved > 0.5:
                 change["rect"] = [old["rect"], element["rect"]]
-            changes.append((not style, -moved, change))
+            changes.append((not (style or image), -moved, change))
     changes.sort(key=lambda entry: entry[:2])
     paths = {str(e["path"]) for e in after}
     result = [change for _, _, change in changes[:limit]]

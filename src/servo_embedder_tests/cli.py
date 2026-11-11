@@ -1,4 +1,4 @@
-"""`servo-embedder-tests run | list | doctor | update-expectations | record-dump`."""
+"""`servo-embedder-tests run | list | doctor | update-expectations | accept | report | record-dump`."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from . import __version__
 from .expectations import Expectations, RunReport, update
 from .page_scenarios import Capture, CaptureStore, Rendering
 from .plugin import BUNDLED_SCENARIOS
+from .report import write_report
 
 
 def _bundled(arg: str) -> str | None:
@@ -189,6 +190,21 @@ def _accept(argv: Sequence[str]) -> int:
     return 0
 
 
+def _report(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="servo-embedder-tests report",
+        description="Write the page scenario report of a run again, e.g. after an agent added its conclusions.",
+    )
+    parser.add_argument("artifacts", type=Path, help="the run's --artifacts folder")
+    options = parser.parse_args(argv)
+    path = write_report(options.artifacts)
+    if path is None:
+        print(f"error: no page scenarios ran in {options.artifacts}")
+        return 1
+    print(f"wrote {path}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     commands = {
@@ -197,6 +213,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "doctor": "check hdc, the device and the app",
         "update-expectations": "rewrite expectations from results.json files",
         "accept": "store page scenario captures of a run as baselines: accept ARTIFACTS --baselines DIR",
+        "report": "write a run's page scenario report (report.html) again: report ARTIFACTS",
         "record-dump": "record a mitmproxy dump of the network scenarios: record-dump PATH [run options]",
     }
     if not argv or argv[0] in ("-h", "--help") or argv[0] not in commands:
@@ -218,6 +235,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _update_expectations(rest)
     if command == "accept":
         return _accept(rest)
+    if command == "report":
+        return _report(rest)
     if not rest:
         print("usage: servo-embedder-tests record-dump PATH [run options]")
         return 2

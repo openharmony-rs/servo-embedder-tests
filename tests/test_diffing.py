@@ -1,7 +1,7 @@
 import random
 from dataclasses import replace
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from servo_embedder_tests import diffing
 from servo_embedder_tests.diffing import BASELINE, Shot
@@ -109,8 +109,10 @@ def test_captures_scrolled_differently_are_compared_where_they_show_the_same_par
 def test_review_images_and_region_crops(tmp_path):
     a, b = _page(tmp_path / "a.png"), _page(tmp_path / "b.png", bold_heading=True)
     diff = diffing.compare(a, b, BASELINE, overlay=tmp_path / "overlay.png")
-    compare = diffing.write_review_images(a, b, diff, tmp_path / "overlay.png", tmp_path, "page-0", ("old", "new"))
-    assert compare.is_file()
+    images = diffing.write_review_images(a, b, diff, tmp_path / "overlay.png", tmp_path, "page-0", ("old", "new"))
+    assert all((tmp_path / name).is_file() for name in images.values())
+    with Image.open(tmp_path / images["actual"]) as actual, Image.open(b.path) as capture:
+        assert actual.size == capture.size
     crop = tmp_path / diff.regions[0].crop
     with Image.open(crop) as image:
         assert 16 < image.height and image.width <= 3 * 512 + 12
@@ -141,6 +143,26 @@ def test_measurements_see_bolder_strokes(tmp_path):
     assert measurement.ink > 1.08
     assert not measurement.reading().startswith("moved")
     assert "more ink: thicker or darker strokes" in measurement.reading()
+
+
+def test_anti_aliasing_is_told_from_a_missing_texture(tmp_path):
+    a = _page(tmp_path / "a.png")
+    with Image.open(a.path) as image:
+        expected = image.convert("RGB")
+    edges = expected.convert("L").filter(ImageFilter.FIND_EDGES).point(lambda value: 255 if value > 24 else 0)
+    shifted = Image.eval(expected, lambda value: max(0, value - 14))
+    edged = Image.composite(shifted, expected, edges)
+    edged.save(tmp_path / "edged.png")
+    anti_aliased = _measured(a, Shot(tmp_path / "edged.png", SIZE))
+    assert anti_aliased.on_edges >= 0.9 and anti_aliased.reading().startswith("only edge pixels differ")
+    textured = expected.copy()
+    pixels = textured.load()
+    for y in range(0, 300, 3):
+        for x in range(300, textured.width, 3):
+            pixels[x, y] = (232, 232, 232)
+    textured.save(tmp_path / "textured.png")
+    missing = _measured(Shot(tmp_path / "textured.png", SIZE), a)
+    assert missing.on_edges < 0.5 and missing.reading().startswith("faint differences away from shared edges")
 
 
 def _line(path, spacing=0.0, stretch=1.0, scale=1.5):

@@ -136,9 +136,27 @@ if (!element) return null;
 const r = element.getBoundingClientRect();
 return [r.left, r.top, r.right, r.bottom];
 """
+# The load state of an image and its URL, the path for same-origin ones. "broken": loaded without a usable picture (a
+# failed request, or data the engine can't decode). SVG without a natural size is never called broken.
+IMAGE = """
+const image = (element) => {
+  const src = element.currentSrc || element.src || "";
+  let shown = src.slice(0, 120);
+  try {
+    const url = new URL(src);
+    if (url.origin === location.origin) shown = url.pathname + url.search;
+  } catch (error) {}
+  const svg = /\\.svg([?#]|$)|^data:image\\/svg/i.test(src);
+  const state = !element.complete ? "loading"
+    : element.naturalWidth > 0 || element.naturalHeight > 0 || svg ? "loaded" : "broken";
+  return { image: state, src: shown };
+};
+"""
 # Elements with text of their own or replaced content that overlap the viewport, with their box in viewport CSS
 # pixels and the computed style a rendering difference often comes from.
-DOM_SNAPSHOT = """
+DOM_SNAPSHOT = (
+    IMAGE
+    + """
 const path = (element) => {
   const parts = [];
   for (let e = element; e && e !== document.documentElement; e = e.parentElement) {
@@ -164,15 +182,24 @@ for (const element of document.body ? document.body.querySelectorAll("*") : []) 
   text = text.trim().replace(/\\s+/g, " ").slice(0, 80);
   if (!text && !/^(img|svg|canvas|video|input|button|select|textarea|iframe)$/.test(element.localName)) continue;
   const style = getComputedStyle(element);
-  elements.push({
+  const entry = {
     path: path(element), text, rect: [r.left, r.top, r.width, r.height].map(round),
     font_family: style.fontFamily, font_size: style.fontSize, font_weight: style.fontWeight,
     font_style: style.fontStyle, color: style.color,
-  });
+  };
+  if (element.localName === "img") Object.assign(entry, image(element));
+  elements.push(entry);
   if (elements.length >= 3000) break;
 }
 return elements;
 """
+)
+BROKEN_IMAGES = (
+    IMAGE
+    + """
+return Array.from(document.images).map(image).filter((found) => found.image === "broken").map((found) => found.src);
+"""
+)
 
 
 def _merge(base: dict[str, object], override: dict[str, object], where: str) -> dict[str, object]:
@@ -440,6 +467,10 @@ class Renderer:
         for step in scenario.steps:
             self._step(engine, driver, scenario, step, rendering, timeout)
         rendering.info["external"] = sorted(set(driver.execute_script(EXTERNAL)))
+        broken = sorted(set(driver.execute_script(BROKEN_IMAGES)))
+        rendering.info["broken_images"] = broken
+        if broken:
+            rendering.problems.append(f"{len(broken)} image(s) did not load: {', '.join(broken[:5])}")
         if scenario.page_option("errors"):
             errors = driver.execute_script("return window.__servoEmbedderTestsErrors || null")
             rendering.info["errors"] = errors
@@ -700,17 +731,21 @@ def compare_captures(
         if not diff.matches:
             failures.append(f"{name}: {diff.summary()}")
             elements = actual.elements()
+            broken = [element for element in elements if element.get("image") == "broken"]
             for region in diff.regions:
                 region.elements = diffing.elements_in(elements, region.box)
             for region in diff.regions[: diffing.MAX_CROPS]:
                 measurement = diffing.measure(stored.shot, actual.shot, diff, region)
                 region.measured = asdict(measurement)
                 region.reading = measurement.reading(text=any(element.get("text") for element in region.elements))
+                missing = sorted({str(element["src"]) for element in diffing.elements_in(broken, region.box, 3)})
+                if missing:
+                    region.reading = f"image {', '.join(missing)} did not load in {labels[1]}; {region.reading}"
             if reference and name in reference:
                 diffing.reference_hint(stored.shot, actual.shot, reference[name].shot, diff.regions)
-            entry["compare"] = diffing.write_review_images(
-                stored.shot, actual.shot, diff, overlay, directory, name, labels
-            ).name
+            images = diffing.write_review_images(stored.shot, actual.shot, diff, overlay, directory, name, labels)
+            entry["compare"] = images["compare"]
+            entry["images"] = images
             entry["dom_changes"] = diffing.dom_changes(_in_document(stored), _in_document(actual))
         else:
             overlay.unlink(missing_ok=True)
