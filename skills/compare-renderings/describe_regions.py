@@ -26,7 +26,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 CATEGORIES = (
     "glyph shapes or font family",
     "font weight or style",
@@ -45,9 +45,12 @@ the middle, and at the bottom the pixels that differ, in red on a faded copy of 
 blue.
 Before each image you get measurements made on its pixels. Trust them for position, width and the amount of ink:
 "moved by (dx, dy)" means the same content shifted, "only edge pixels differ" means the rows look the same apart from
-anti-aliasing, "less ink" means thinner or lighter strokes or fewer marks. Use the image for what measurements can't
-tell: stroke weight (bold or regular), typeface (handwriting or plain, serif or sans-serif), glyph shapes, missing or
-extra content, colours.
+anti-aliasing, "less ink" means thinner or lighter strokes or fewer marks, "colour changed: X drawn Y" means
+pixels that are colour X in EXPECTED are colour Y in ACTUAL (e.g. a colour emoji drawn as a black glyph).
+The elements come from the page's DOM: their text is what should be there, whether drawn or not; a transparent colour
+with background_clip "text" means text filled with its background (e.g. a gradient); clip_path or mask means a
+clipped shape. Use the image for what measurements can't tell: stroke weight (bold or regular), typeface
+(handwriting or plain, serif or sans-serif), glyph shapes, missing or extra content, colours.
 For each region, compare the top and the middle row item by item, "same" or the difference you see: weight, glyphs,
 spacing, position, colour, content. Don't report differences that neither the image nor the measurements show.
 Then name the main difference, pick the closest category from: CATEGORIES, and judge "ACTUAL" against "EXPECTED":

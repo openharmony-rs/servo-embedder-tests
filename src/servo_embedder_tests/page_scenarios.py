@@ -152,10 +152,29 @@ const image = (element) => {
   return { image: state, src: shown };
 };
 """
-# Elements with text of their own or replaced content that overlap the viewport, with their box in viewport CSS
-# pixels and the computed style a rendering difference often comes from.
+# Properties that change how an element is painted, when not at their initial value (diffing.PAINT_KEYS).
+PAINT = """
+const paint = (style) => {
+  const found = {};
+  // Same-origin URLs without the origin, whose port changes between runs.
+  const cut = (value) => String(value).split(location.origin).join("").slice(0, 120);
+  if (style.backgroundClip === "text" || style.webkitBackgroundClip === "text") found.background_clip = "text";
+  if (style.backgroundImage && style.backgroundImage !== "none") found.background_image = cut(style.backgroundImage);
+  if (style.clipPath && style.clipPath !== "none") found.clip_path = cut(style.clipPath);
+  const mask = style.maskImage || style.webkitMaskImage;
+  if (mask && mask !== "none") found.mask = cut(mask);
+  if (style.filter && style.filter !== "none") found.filter = cut(style.filter);
+  if (style.opacity && style.opacity !== "1") found.opacity = style.opacity;
+  return found;
+};
+"""
+# Bumped when DOM snapshots record more, so that comparisons with older stored ones skip what those lack.
+DOM_VERSION = 2
+# Elements with text of their own, replaced content or a non-initial paint property (PAINT) that overlap the
+# viewport, with their box in viewport CSS pixels and the computed style a rendering difference often comes from.
 DOM_SNAPSHOT = (
     IMAGE
+    + PAINT
     + """
 const path = (element) => {
   const parts = [];
@@ -180,12 +199,14 @@ for (const element of document.body ? document.body.querySelectorAll("*") : []) 
   let text = "";
   for (const node of element.childNodes) if (node.nodeType === 3) text += node.data;
   text = text.trim().replace(/\\s+/g, " ").slice(0, 80);
-  if (!text && !/^(img|svg|canvas|video|input|button|select|textarea|iframe)$/.test(element.localName)) continue;
+  const replaced = /^(img|svg|canvas|video|input|button|select|textarea|iframe)$/.test(element.localName);
   const style = getComputedStyle(element);
+  const painted = paint(style);
+  if (!text && !replaced && !Object.keys(painted).length) continue;
   const entry = {
     path: path(element), text, rect: [r.left, r.top, r.width, r.height].map(round),
     font_family: style.fontFamily, font_size: style.fontSize, font_weight: style.fontWeight,
-    font_style: style.fontStyle, color: style.color,
+    font_style: style.fontStyle, color: style.color, ...painted,
   };
   if (element.localName === "img") Object.assign(entry, image(element));
   elements.push(entry);
@@ -309,7 +330,8 @@ def discover(roots: list[Path]) -> list[Scenario]:
 
 @dataclass
 class Capture:
-    """A screenshot of the viewport, `size` CSS pixels, at `scroll`, with its DOM snapshot and masked boxes."""
+    """A screenshot of the viewport, `size` CSS pixels, at `scroll`, with its DOM snapshot (of `dom_version`) and
+    masked boxes."""
 
     name: str
     image: Path
@@ -317,6 +339,7 @@ class Capture:
     size: tuple[int, int]
     scroll: tuple[float, float]
     masks: list[CssBox]
+    dom_version: int = DOM_VERSION
 
     @property
     def shot(self) -> Shot:
@@ -326,7 +349,12 @@ class Capture:
         return json.loads(self.dom.read_text()) if self.dom.is_file() else []
 
     def meta(self) -> dict[str, object]:
-        return {"size": list(self.size), "scroll": list(self.scroll), "masks": [list(box) for box in self.masks]}
+        return {
+            "size": list(self.size),
+            "scroll": list(self.scroll),
+            "masks": [list(box) for box in self.masks],
+            "dom": self.dom_version,
+        }
 
     @classmethod
     def from_meta(cls, name: str, directory: Path, meta: dict) -> Capture:
@@ -337,6 +365,7 @@ class Capture:
             (int(meta["size"][0]), int(meta["size"][1])),
             (float(meta["scroll"][0]), float(meta["scroll"][1])),
             [(box[0], box[1], box[2], box[3]) for box in meta.get("masks", [])],
+            int(meta.get("dom", 1)),
         )
 
 
@@ -746,7 +775,9 @@ def compare_captures(
             images = diffing.write_review_images(stored.shot, actual.shot, diff, overlay, directory, name, labels)
             entry["compare"] = images["compare"]
             entry["images"] = images
-            entry["dom_changes"] = diffing.dom_changes(_in_document(stored), _in_document(actual))
+            entry["dom_changes"] = diffing.dom_changes(
+                _in_document(stored), _in_document(actual), paint=min(stored.dom_version, actual.dom_version) >= 2
+            )
         else:
             overlay.unlink(missing_ok=True)
         captures[name] = {**diff.to_dict(), **entry}

@@ -165,6 +165,46 @@ def test_anti_aliasing_is_told_from_a_missing_texture(tmp_path):
     assert missing.on_edges < 0.5 and missing.reading().startswith("faint differences away from shared edges")
 
 
+def _notice(path, icon, stroke=0):
+    """A warning notice: a triangle icon in `icon` colour and orange-brown text, `stroke` px bolder."""
+    image = Image.new("RGB", (480, 120), (255, 251, 235))
+    draw = ImageDraw.Draw(image)
+    draw.polygon([(40, 90), (70, 30), (100, 90)], fill=icon)
+    font = ImageFont.load_default(size=28)
+    draw.text((130, 40), "Risk notice", fill=(180, 83, 9), font=font, stroke_width=stroke, stroke_fill=(180, 83, 9))
+    image.save(path)
+    return Shot(path, (480, 120))
+
+
+def test_a_colour_drawn_in_another_colour_is_named(tmp_path):
+    expected = _notice(tmp_path / "a.png", (245, 158, 11))
+    recoloured = _measured(expected, _notice(tmp_path / "b.png", (40, 40, 40)))
+    assert recoloured.colours[0][0].startswith("orange ") and recoloured.colours[0][1].startswith("black ")
+    assert "colour changed: orange #f59e0b drawn black" in recoloured.reading()
+    thinner = _measured(_notice(tmp_path / "c.png", (245, 158, 11), stroke=1), expected)
+    assert thinner.colours == () and "colour" not in thinner.reading()
+
+
+def test_region_elements_are_those_matching_the_region_best():
+    elements = [
+        {"path": "span.star", "text": "✧", "rect": [274, 8, 12, 20]},
+        {"path": "h1", "text": "天外来物巡回演唱会", "rect": [52, 12, 226, 32], "color": "rgba(0, 0, 0, 0)"},
+        {"path": "span.heart", "text": "♡", "rect": [110, 12, 14, 20]},
+    ]
+    found = diffing.elements_in(elements, (48, 0, 320, 64), limit=2)
+    assert [element["path"] for element in found] == ["h1", "span.heart"]
+
+
+def test_dom_changes_compare_text_and_paint_properties_both_snapshots_record():
+    before = [{"path": "h1", "text": "Old", "rect": [0, 0, 10, 10], "background_clip": "text"}]
+    after = [{"path": "h1", "text": "New", "rect": [0, 0, 10, 10]}]
+    assert diffing.dom_changes(before, after)[0]["style"] == {"text": ["Old", "New"], "background_clip": ["text", None]}
+    assert diffing.dom_changes(before, after, paint=False)[0]["style"] == {"text": ["Old", "New"]}
+    quoted = [{"path": "p", "text": "a", "rect": [0, 0, 1, 1], "font_family": '"Klee One", cursive'}]
+    plain = [{"path": "p", "text": "a", "rect": [0, 0, 1, 1], "font_family": "Klee One, cursive"}]
+    assert diffing.dom_changes(quoted, plain) == []
+
+
 def _line(path, spacing=0.0, stretch=1.0, scale=1.5):
     """One line of text, 480x60 CSS px, with extra letter spacing or glyphs stretched horizontally."""
     font = ImageFont.load_default(size=round(15 * scale))
