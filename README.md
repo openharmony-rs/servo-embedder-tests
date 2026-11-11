@@ -143,7 +143,8 @@ A capture is a screenshot of the web view, taken by the OS the same way for ever
 - two screenshots in a row are the same.
 
 If the page keeps changing, the failure names what changes and the elements there. Each capture keeps a DOM
-snapshot: the boxes, text and fonts of the elements with text, and whether each image loaded.
+snapshot: the boxes, text and fonts of the elements with text, whether each image loaded, and paint properties such
+as `background-clip: text`, `clip-path` and background images where set.
 
 Captures are compared in tiles of 16 CSS px. A tile differs when more than 5% of its pixels differ by more than the
 tolerance, so that a heading in another font fails even on a long page. Engines are compared in CSS pixels with a
@@ -153,11 +154,12 @@ they show the same part of the page.
 Each comparison test writes `diff.json` with, for each capture:
 
 - the differing regions in the actual capture's viewport, in CSS px;
-- the elements in each region, with their computed fonts;
+- the elements whose boxes best match each region, with their text, computed fonts and paint properties;
 - for the largest regions, a `reading` of pixel measurements: moved by how much, only anti-aliasing, wider with
-  the same ink (spacing), less or more ink (stroke weight, or content missing), or shapes that differ even when
-  aligned. It starts with the images in the region that did not load, if any;
-- `dom_changes`, the elements whose box, style or image load state changed;
+  the same ink (spacing), less or more ink (stroke weight, or content missing), shapes that differ even when
+  aligned, or a colour drawn in another colour (such as a colour emoji drawn black). It starts with the images in the
+  region that did not load, if any;
+- `dom_changes`, the elements whose text, box, style or image load state changed;
 - for baselines, whether each region moved closer to the reference engine's rendering or further from it, a hint
   whether a change is an improvement.
 

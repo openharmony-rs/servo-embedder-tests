@@ -28,8 +28,10 @@ doesn't settle the question.
 For each capture, `diff.json` gives:
 
 - **`regions`**: boxes in CSS px of the actual capture's viewport, with pixel counts and `elements`. The elements are
-  the smallest with text in the region, with path, text and computed `font_family`, `font_size`, `font_weight`,
-  `font_style` and `color`.
+  those whose boxes best match the region, with path, text and computed `font_family`, `font_size`, `font_weight`,
+  `font_style` and `color`, and paint properties when set: `background_clip` ("text": text filled with its
+  background, usually with a transparent `color`), `background_image`, `clip_path`, `mask`, `filter`, `opacity`.
+  Elements without text are listed when they have one of those, e.g. a card cut by a `clip_path`.
 - **`reading`** of the largest regions, from pixel measurements (`measured`: the offset that best aligns the two
   renderings, the ink of the actual one relative to the expected one, the width of the ink). Trust it, it settles
   most cases without looking:
@@ -40,11 +42,14 @@ For each capture, `diff.json` gives:
     missing" / "content added" when the ink halved or doubled;
   - "image <url> did not load in <engine>", first: an `<img>` in the region has no picture, because its request
     failed or the engine can't decode it. That settles the region; the rest of its reading is the consequence;
+  - "colour changed: orange #f6ab2a drawn grey #44433f": pixels of one colour are drawn in another, not just thinner
+    or moved. Seen for colour emoji drawn as monochrome glyphs (⚠️, ❤️);
   - "shapes differ even at the best alignment": another typeface, other glyphs or missing content. This one needs
     eyes (step 3).
-- **`dom_changes`**: elements whose computed style or box changed between the expected and the actual capture's DOM
-  snapshot. A style change, or a text box that got wider or narrower, often explains a region outright: another
-  fallback font, another weight, changed spacing.
+- **`dom_changes`**: elements whose text, computed style or box changed between the expected and the actual
+  capture's DOM snapshot. A style change, or a text box that got wider or narrower, often explains a region outright:
+  another fallback font, another weight, changed spacing. Against a reference engine, a paint property one engine
+  computes and the other doesn't (`background_clip: text` against none) points at CSS the other engine lacks.
 - **`reference`** (baseline tests, when the reference engine's capture is stored): whether the new rendering of the
   region is closer to the reference engine's or further from it. Closer suggests an improvement, further a
   regression. The engines rasterize differently, so it's a hint, not a verdict.

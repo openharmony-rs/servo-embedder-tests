@@ -9,6 +9,7 @@ have there.
 
 from __future__ import annotations
 
+import colorsys
 import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
@@ -38,6 +39,28 @@ STRIP_SEARCH = 3
 # Edge detector output above which a pixel is on an edge. Anti-aliasing changes pixels on edges both renderings have;
 # on the DAYU200, 69-100% of the differing pixels of such regions, against 2-14% for a missing texture or picture.
 EDGE_CONTRAST = 24
+# Colour comparison: a pixel is coloured when its channels spread by at least COLOUR_CHROMA and its brightest is at
+# least 64; hues fall into 12 bins of 30 degrees. A colour counts as changed where a rendering has COLOUR_AREA CSS px²
+# of a hue with no similar hue within COLOUR_REACH CSS px in the other, which shows a colour other than the
+# background around them there. On 142 regions of eight GenUI pages against ArkWeb, that found the colour emoji drawn
+# black and red hearts drawn pink, and nothing in regions of thinner strokes, other glyphs or resampled photos.
+COLOUR_CHROMA = 48
+COLOUR_AREA = 40
+COLOUR_REACH = 2
+HUES = (
+    "red",
+    "orange",
+    "yellow",
+    "yellow-green",
+    "green",
+    "spring green",
+    "cyan",
+    "azure",
+    "blue",
+    "violet",
+    "purple",
+    "pink",
+)
 
 
 @dataclass(frozen=True)
@@ -490,6 +513,68 @@ def _on_shared_edges(a: Image.Image, b: Image.Image) -> float | None:
     return round(shared / total, 2) if total else None
 
 
+def _hue_masks(image: Image.Image) -> list[Image.Image]:
+    """Masks of the coloured pixels of `image`, one per hue bin."""
+    r, g, b = image.split()
+    high = ImageChops.lighter(ImageChops.lighter(r, g), b)
+    low = ImageChops.darker(ImageChops.darker(r, g), b)
+    coloured = ImageChops.multiply(
+        ImageChops.subtract(high, low).point(lambda value: 255 if value >= COLOUR_CHROMA else 0),
+        high.point(lambda value: 255 if value >= 64 else 0),
+    )
+    hue = image.convert("HSV").getchannel("H")
+    bins = len(HUES)
+    return [
+        ImageChops.multiply(coloured, hue.point(lambda h, k=k: 255 if h * bins // 256 == k else 0)) for k in range(bins)
+    ]
+
+
+def colour_name(rgb: Sequence[float]) -> str:
+    h, s, v = colorsys.rgb_to_hsv(*(c / 255 for c in rgb[:3]))
+    if v < 0.25:
+        return "black"
+    if s < 0.2:
+        return "white" if v > 0.85 else "grey"
+    return HUES[int(h * len(HUES) + 0.5) % len(HUES)]
+
+
+def _hex(rgb: Sequence[float]) -> str:
+    return "#" + "".join(f"{round(c):02x}" for c in rgb[:3])
+
+
+def _colours_lost(a: Image.Image, b: Image.Image, scale: float) -> list[tuple[int, str, str]]:
+    """The coloured pixels of `a` that `b` has no similar hue for nearby, where `b` shows another colour than the
+    background around them in `a`: (pixels, colour in `a`, colour in `b`) per hue."""
+    masks_a, masks_b = _hue_masks(a), _hue_masks(b)
+    bins = len(HUES)
+    reach = 2 * max(1, round(COLOUR_REACH * scale)) + 1
+    floor = COLOUR_AREA * scale * scale
+    found = []
+    for k, mask in enumerate(masks_a):
+        if mask.histogram()[255] < floor:
+            continue
+        similar = ImageChops.lighter(ImageChops.lighter(masks_b[k - 1], masks_b[k]), masks_b[(k + 1) % bins])
+        gone = ImageChops.multiply(mask, ImageChops.invert(similar.filter(ImageFilter.MaxFilter(reach))))
+        count = gone.histogram()[255]
+        if count < floor:
+            continue
+        was, now = ImageStat.Stat(a, gone).mean, ImageStat.Stat(b, gone).mean
+        around = ImageChops.subtract(ImageChops.subtract(gone.filter(ImageFilter.MaxFilter(reach)), gone), mask)
+        background = ImageStat.Stat(a, around).median if around.getbbox() else ImageStat.Stat(a).median
+        apart = max(abs(n - g) for n, g in zip(now, background, strict=True))
+        if colour_name(was) != colour_name(now) and apart > 48:
+            found.append((count, f"{colour_name(was)} {_hex(was)}", f"{colour_name(now)} {_hex(now)}"))
+    return found
+
+
+def colours_changed(a: Image.Image, b: Image.Image, scale: float) -> list[tuple[str, str, float]]:
+    """Where `b` draws other colours than `a`: (colour in `a`, colour in `b`, CSS px²), the largest first."""
+    changes = [(n, was, now) for n, was, now in _colours_lost(a, b, scale)]
+    changes += [(n, was, now) for n, now, was in _colours_lost(b, a, scale)]
+    changes.sort(reverse=True)
+    return [(was, now, round(n / scale / scale)) for n, was, now in changes[:2]]
+
+
 def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measurement:
     """Measures how `actual` differs from `expected` in `region`, with a margin around it."""
     a, b = expected.load(diff.top, diff.size), actual.load(diff.top, diff.size)
@@ -516,6 +601,7 @@ def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measure
         (round(extent_a / scale, 1), round(extent_b / scale, 1)),
         _pieces_aligned(gray_a, gray_b, scale),
         _on_shared_edges(gray_a, gray_b),
+        tuple(colours_changed(a.crop(box), b.crop(box), scale)),
     )
 
 
@@ -524,8 +610,9 @@ class Measurement:
     """How a region differs: `offset`, in CSS px, best aligns the actual rendering onto the expected one, with mean
     luminance differences (0-255) there and unshifted; `ink` is the actual rendering's ink relative to the expected
     one's (below 1: thinner or lighter strokes, or fewer marks), `ink_width` the width of the ink in each, in CSS px,
-    `pieces_aligned` the share of differing strips that match on their own (spacing changes all, glyphs none) and
-    `on_edges` the share of differing pixels on edges both renderings have (anti-aliasing: most)."""
+    `pieces_aligned` the share of differing strips that match on their own (spacing changes all, glyphs none),
+    `on_edges` the share of differing pixels on edges both renderings have (anti-aliasing: most) and `colours` the
+    colours the actual rendering draws instead of the expected one's (see `colours_changed`)."""
 
     offset: tuple[float, float]
     difference_aligned: float
@@ -534,6 +621,7 @@ class Measurement:
     ink_width: tuple[float, float]
     pieces_aligned: float | None = None
     on_edges: float | None = None
+    colours: tuple[tuple[str, str, float], ...] = ()
 
     def reading(self, text: bool = True) -> str:
         """What the measurements mean, in words, for an agent that can't see the crops. Without `text` in the region,
@@ -573,6 +661,8 @@ class Measurement:
         # Spaced-out text can't be aligned as a whole either, so this would point at the wrong cause.
         if not moved and not spacing and unshifted >= 3 and aligned > 8:
             parts.append("shapes differ even at the best alignment: glyphs, typeface or content")
+        for was, now, area in self.colours:
+            parts.append(f"colour changed: {was} drawn {now} ({area:g} CSS px²)")
         return "; ".join(parts) or "small differences without a clear pattern"
 
 
@@ -619,37 +709,55 @@ def _mean(image: Image.Image) -> float:
 
 # Computed style properties of DOM snapshot elements that a rendering difference often comes from.
 STYLE_KEYS = ("font_family", "font_size", "font_weight", "font_style", "color")
+# Properties that change how an element is painted, recorded only when not at their initial value (snapshots of
+# version 2 on).
+PAINT_KEYS = ("background_clip", "background_image", "clip_path", "mask", "filter", "opacity")
 
 
 def elements_in(elements: Sequence[dict[str, object]], box: CssBox, limit: int = 5) -> list[dict[str, object]]:
-    """The smallest elements of a DOM snapshot that overlap `box`, in the snapshot's coordinates."""
+    """The elements of a DOM snapshot whose boxes best match `box`, by intersection over union, in the snapshot's
+    coordinates: the element a region is about, rather than whatever small marks it also touches."""
     left, top, right, bottom = box
-    found = []
+    area = (right - left) * (bottom - top)
+    scored = []
     for element in elements:
         x, y, width, height = element["rect"]  # type: ignore[misc]
-        if x < right and x + width > left and y < bottom and y + height > top:
-            found.append(element)
-    found.sort(key=lambda e: e["rect"][2] * e["rect"][3])  # type: ignore[index]
-    return [_short(element) for element in found[:limit]]
+        overlap = (min(right, x + width) - max(left, x)) * (min(bottom, y + height) - max(top, y))
+        if min(right, x + width) > max(left, x) and min(bottom, y + height) > max(top, y):
+            scored.append((overlap / (area + width * height - overlap), element))
+    scored.sort(key=lambda entry: entry[0], reverse=True)
+    return [_short(element) for _, element in scored[:limit]]
 
 
 def _short(element: dict[str, object]) -> dict[str, object]:
-    keys = ("path", "text", "rect", *STYLE_KEYS, "image", "src")
+    keys = ("path", "text", "rect", *STYLE_KEYS, *PAINT_KEYS, "image", "src")
     return {key: element[key] for key in keys if element.get(key) not in (None, "")}
 
 
+def _comparable(key: str, value: object) -> object:
+    """`value` as engines agree on it: Chromium quotes font family names, Servo doesn't."""
+    if key == "font_family" and isinstance(value, str):
+        return ",".join(name.strip().strip("\"'") for name in value.split(","))
+    return value
+
+
 def dom_changes(
-    before: Sequence[dict[str, object]], after: Sequence[dict[str, object]], limit: int = 40
+    before: Sequence[dict[str, object]], after: Sequence[dict[str, object]], limit: int = 40, paint: bool = True
 ) -> list[dict[str, object]]:
-    """Elements whose box, style or image load state differs between two DOM snapshots, matched by path, style and
-    image changes first."""
+    """Elements whose text, box, style or image load state differs between two DOM snapshots, matched by path, text,
+    style and image changes first. `paint` compares PAINT_KEYS too, for snapshots that both record them."""
     earlier = {str(e["path"]): e for e in before}
+    keys = ("text", *STYLE_KEYS, *(PAINT_KEYS if paint else ()))
     changes = []
     for element in after:
         old = earlier.get(str(element["path"]))
         if old is None:
             continue
-        style = {key: [old.get(key), element.get(key)] for key in STYLE_KEYS if old.get(key) != element.get(key)}
+        style = {
+            key: [old.get(key), element.get(key)]
+            for key in keys
+            if _comparable(key, old.get(key)) != _comparable(key, element.get(key))
+        }
         image = old.get("image") is not None and old.get("image") != element.get("image")
         moved = max(abs(a - b) for a, b in zip(old["rect"], element["rect"], strict=True))  # type: ignore[call-overload]
         if style or image or moved > 0.5:
