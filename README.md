@@ -126,7 +126,7 @@ uvx servo-embedder-tests accept servo-embedder-tests-artifacts --baselines genui
 
 Each scenario has three tests:
 
-- `test_renders`: the page loads, settles and passes its own checks;
+- `test_renders`: the page loads, settles, every `<img>` loaded a picture, and the page passes its own checks;
 - `test_matches_baseline`: each capture matches the engine's baseline;
 - `test_matches_reference`: each capture matches the reference engine's.
 
@@ -143,7 +143,7 @@ A capture is a screenshot of the web view, taken by the OS the same way for ever
 - two screenshots in a row are the same.
 
 If the page keeps changing, the failure names what changes and the elements there. Each capture keeps a DOM
-snapshot: the boxes, text and fonts of the elements with text.
+snapshot: the boxes, text and fonts of the elements with text, and whether each image loaded.
 
 Captures are compared in tiles of 16 CSS px. A tile differs when more than 5% of its pixels differ by more than the
 tolerance, so that a heading in another font fails even on a long page. Engines are compared in CSS pixels with a
@@ -155,8 +155,9 @@ Each comparison test writes `diff.json` with, for each capture:
 - the differing regions in the actual capture's viewport, in CSS px;
 - the elements in each region, with their computed fonts;
 - for the largest regions, a `reading` of pixel measurements: moved by how much, only anti-aliasing, wider with
-  the same ink (spacing), less or more ink (stroke weight), or shapes that differ even when aligned;
-- `dom_changes`, the elements whose box or style changed;
+  the same ink (spacing), less or more ink (stroke weight, or content missing), or shapes that differ even when
+  aligned. It starts with the images in the region that did not load, if any;
+- `dom_changes`, the elements whose box, style or image load state changed;
 - for baselines, whether each region moved closer to the reference engine's rendering or further from it, a hint
   whether a change is an improvement.
 
@@ -164,6 +165,12 @@ It also writes `<capture>-compare.png` (expected, actual and the differing pixel
 `regions/`, expected above actual above the differing pixels. Those crops are what to send to an image-capable model
 for what the readings leave open: the skill in `skills/compare-renderings` describes how an agent triages a run, and
 its script asks any OpenAI-compatible endpoint about the regions.
+
+For people, a run writes `report.html` to the artifacts folder: per scenario, each differing capture next to what it
+was compared with (hover the actual one to see the expected one in its place), the differing pixels, the regions
+numbered with their enlarged crops and readings, and the DOM changes. Where an agent triaged the run, the report also
+shows the image model's answers and the agent's conclusion (`triage.json` in the test's folder, see the skill), so
+that you can check them against the pictures. `servo-embedder-tests report <artifacts>` writes it again.
 
 `page-scenarios.toml` in the folder sets defaults for all scenarios, `scenario.toml` in a scenario's folder
 overrides them. Changes to the page are opt-in, under `[page]`:

@@ -80,8 +80,11 @@ def _image_url(path: Path, max_width: int) -> str:
 
 
 def explained(region: dict) -> bool:
-    """Whether the pixel measurements alone explain the region: a shift, anti-aliasing or changed spacing."""
+    """Whether the measurements alone explain the region: a shift, anti-aliasing, changed spacing or an image that
+    did not load."""
     parts = (region.get("reading") or "").split("; ")
+    if parts[0].startswith("image ") and " did not load in " in parts[0]:
+        return True
     settled = ("moved by", "only edge pixels differ")
     return bool(parts[0]) and all(part.startswith(settled) or "letter spacing" in part for part in parts)
 

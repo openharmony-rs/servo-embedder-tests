@@ -36,7 +36,10 @@ For each capture, `diff.json` gives:
   - "moved by (dx, dy) CSS px, otherwise nearly the same": a layout shift;
   - "only edge pixels differ": anti-aliasing or a sub-pixel position, usually noise;
   - "wider/narrower with about the same ink": letter spacing or glyph widths;
-  - "less ink" / "more ink": thinner or thicker strokes (e.g. bold not drawn bold), or fewer or more marks;
+  - "less ink" / "more ink": thinner or thicker strokes (e.g. bold not drawn bold), or fewer or more marks; "content
+    missing" / "content added" when the ink halved or doubled;
+  - "image <url> did not load in <engine>", first: an `<img>` in the region has no picture, because its request
+    failed or the engine can't decode it. That settles the region; the rest of its reading is the consequence;
   - "shapes differ even at the best alignment": another typeface, other glyphs or missing content. This one needs
     eyes (step 3).
 - **`dom_changes`**: elements whose computed style or box changed between the expected and the actual capture's DOM
@@ -51,6 +54,10 @@ Also check:
 
 - `rendering.json` `external`: requests to other origins make renderings depend on the network. Fix the page rather
   than the baseline.
+- `rendering.json` `broken_images` (also `test_renders`' failure): images without a picture. If the same image is
+  broken in the baseline's or the reference engine's DOM snapshot too, the page is at fault; otherwise the engine
+  failed to load or decode it. CSS background images aren't in the DOM: a missing one shows only as "less ink" over
+  the element's area.
 - Two renderings of the same build normally match exactly, so in a baseline test every reading is a real change,
   however small: "moved by 1 px" is a layout shift to report, not noise. Only "only edge pixels differ" in a region of
   a few pixels, e.g. at an image edge, is noise.
@@ -70,8 +77,9 @@ python3 skills/compare-renderings/describe_regions.py <test folder> --dry-run   
 python3 skills/compare-renderings/describe_regions.py <test folder> --max-regions 4
 ```
 
-- **Only what the measurements leave open.** Regions whose reading is a shift, anti-aliasing or spacing are not sent
-  (they're listed under `explained`); a test with only those makes no request. `--all-regions` sends them too.
+- **Only what the measurements leave open.** Regions whose reading is a shift, anti-aliasing, spacing or an image
+  that did not load are not sent (they're listed under `explained`); a test with only those makes no request.
+  `--all-regions` sends them too.
 - **One request per test.** The script sends the largest `--max-regions` open regions. Each crop shows expected above
   actual above the differing pixels, enlarged; the reading and the text from `diff.json` go with it. It asks for JSON:
   per region a checklist (weight, glyphs, spacing, position, colour, content), the main difference, a category, a
@@ -110,3 +118,17 @@ python3 skills/compare-renderings/describe_regions.py <test folder> --max-region
   crop.
 - **Unsettled or flaky:** the page animates or depends on the network. Add a `mask`, `[page] freeze = true` or local
   copies of the resources to the scenario. Don't add a tolerance.
+
+Then record your conclusion for the people who check it: write `triage.json` into each test folder you triaged and
+write the report again. The report shows it next to the pictures, the image model's answers too, so that a person can
+see whether you got it right. Name regions as their crops are named (`regions/page-0-1.png` → `page-0-1`), and say
+what you based each note on (the reading, the DOM changes, the image model, the crop).
+
+```json
+{"agent": "<model or tool>", "verdict": "regression", "summary": "<one or two sentences>",
+ "regions": {"page-0-0": "<what differs and why you think so>"}}
+```
+
+```sh
+servo-embedder-tests report <artifacts>     # rewrites <artifacts>/report.html
+```

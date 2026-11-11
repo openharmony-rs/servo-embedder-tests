@@ -34,7 +34,7 @@ BUNDLED_SCENARIOS = Path(str(resources.files("servo_embedder_tests") / "scenario
 EXPECTED_KEY = pytest.StashKey[list[str]]()
 # Marks a per-test artifacts folder, so that the next run can remove it.
 TEST_ARTIFACTS_MARKER = "test-key.txt"
-RUN_ARTIFACTS = ("results.json", "hilog.txt", "servoshell.log", "mitmproxy.log", "chromedriver.log")
+RUN_ARTIFACTS = ("results.json", "hilog.txt", "servoshell.log", "mitmproxy.log", "chromedriver.log", "report.html")
 TEST_KEY = pytest.StashKey[str]()
 NEEDS_TEST_IME = "needs a test IME: pass --test-ime <bundle>"
 
@@ -128,6 +128,7 @@ class ScenarioRun:
     expectations: Expectations = field(init=False)
     report: RunReport = field(init=False)
     stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
+    page_report: Path | None = None
 
     def __post_init__(self) -> None:
         self.expectations = Expectations.load(self.config.option.expectations)
@@ -276,6 +277,9 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     path = config.option.results_json or run.artifacts / "results.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(run.report.to_json())
+    from .report import write_report
+
+    run.page_report = write_report(run.artifacts, path)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a") as f:
             f.write(_markdown_summary(run.report))
@@ -402,6 +406,8 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
         terminalreporter.line(f"UNEXPECTED {result.status} (expected {'/'.join(result.expected)}): {result.key}")
     if not unexpected:
         terminalreporter.line("no unexpected results")
+    if run.page_report is not None:
+        terminalreporter.line(f"page scenario report: {run.page_report}")
 
 
 @pytest.fixture(scope="session")

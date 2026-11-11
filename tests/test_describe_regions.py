@@ -80,7 +80,10 @@ def test_regions_the_measurements_explain_are_not_sent(tmp_path, capsys):
     report = json.loads((folder / "diff.json").read_text())
     regions = report["captures"]["page-0"]["regions"]
     regions[0]["reading"] = "moved by (+0, +1.33) CSS px, otherwise nearly the same"
-    regions[1]["reading"] = "content 6 CSS px wider with about the same ink: letter spacing or glyph widths"
+    regions[1]["reading"] = (
+        "image /menu/a.jpg did not load in servoshell; 80% less ink: content missing, or much fainter; "
+        "shapes differ even at the best alignment: glyphs, typeface or content"
+    )
     (folder / "diff.json").write_text(json.dumps(report))
     assert describe_regions.main([str(folder), "--base-url", "http://127.0.0.1:1", "--model", "m"]) == 0
     answer = json.loads(capsys.readouterr().out)
