@@ -1,4 +1,4 @@
-"""`servo-embedder-tests run | list | doctor | update-expectations | accept | report | record-dump`."""
+"""`servo-embedder-tests run | list | doctor | update-expectations | accept | report | svg-cards | record-dump`."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from . import __version__
+from . import __version__, svg_cards
 from .expectations import Expectations, RunReport, update
 from .page_scenarios import Capture, CaptureStore, Rendering
 from .plugin import BUNDLED_SCENARIOS
@@ -212,6 +212,23 @@ def _report(argv: Sequence[str]) -> int:
     return 0
 
 
+def _svg_cards(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="servo-embedder-tests svg-cards",
+        description="Write a page scenario of each card of the bundled SVG test pages, for --page-scenarios.",
+    )
+    parser.add_argument("folder", type=Path, help="a new folder, or one that svg-cards wrote before")
+    options = parser.parse_args(argv)
+    cards = svg_cards.load()
+    try:
+        svg_cards.write(options.folder, cards)
+    except ValueError as error:
+        print(f"error: {error}")
+        return 1
+    print(f"wrote {len(cards)} SVG cards to {options.folder}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     commands = {
@@ -221,6 +238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "update-expectations": "rewrite expectations from results.json files",
         "accept": "store page scenario captures of a run as baselines: accept ARTIFACTS --baselines DIR",
         "report": "write a run's page scenario report (report.html) again: report ARTIFACTS",
+        "svg-cards": "write the cards of the SVG test pages as page scenarios: svg-cards FOLDER",
         "record-dump": "record a mitmproxy dump of the network scenarios: record-dump PATH [run options]",
     }
     if not argv or argv[0] in ("-h", "--help") or argv[0] not in commands:
@@ -244,6 +262,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _accept(rest)
     if command == "report":
         return _report(rest)
+    if command == "svg-cards":
+        return _svg_cards(rest)
     if not rest:
         print("usage: servo-embedder-tests record-dump PATH [run options]")
         return 2
