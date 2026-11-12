@@ -210,8 +210,9 @@ expect_change = "#buy"        # fails unless the capture differs from the previo
 ```
 
 `seed_random` replaces the page's `Math.random()` with a seeded generator. Its numbers repeat as long as the page asks
-for them in the same order: calls from timers or load events whose order varies, workers and `crypto.getRandomValues()`
-stay random.
+for them in the same order: calls from timers, animation frames or load events whose order or number varies from load
+to load, e.g. a script that adds a random star every frame, still differ; workers and `crypto.getRandomValues()` stay
+random.
 
 The `arkweb` engine and the reference captures take any app as `--arkweb-viewer`, started with its `EntryAbility`
 or `--arkweb-viewer-ability`, and with `--arkweb-viewer-ps NAME VALUE` parameters. The app needs to:
