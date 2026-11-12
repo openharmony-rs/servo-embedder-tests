@@ -97,8 +97,11 @@ ERRORS = """<script>(() => {
   const add = (kind, message) => errors.length < 100 && errors.push({ kind, message: String(message).slice(0, 500) });
   addEventListener("error", (event) => {
     const target = event.target;
-    if (target && target !== window && (target.src || target.href)) add("resource", target.src || target.href);
-    else add("error", event.message + (event.filename ? ` (${event.filename}:${event.lineno})` : ""));
+    if (target instanceof Element) {
+      const url = target.currentSrc || target.src || (typeof target.href === "string" && target.href)
+        || target.getAttribute("href") || target.getAttribute("xlink:href") || "";
+      add("resource", `<${target.localName}> ${url}`.trim());
+    } else add("error", event.message + (event.filename ? ` (${event.filename}:${event.lineno})` : ""));
   }, true);
   addEventListener("unhandledrejection", (event) => {
     add("unhandledrejection", event.reason && event.reason.stack || event.reason);
