@@ -25,7 +25,6 @@ from .page_scenarios import PageRuns, Renderer
 from .pages import PageServer
 from .platform import DesktopHost, HilogStream, OhosDevice, Platform
 from .proxy import MitmProxy, ProxyMode
-from .references import ArkWebViewer, References, ReferenceStore
 from .servoshell import PrefValue, Servoshell, ServoshellDesktop, ServoshellOhos
 from .webdriver import connect
 from .webview_app import WebViewApp
@@ -72,7 +71,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption(
         "--arkweb-viewer",
         metavar="BUNDLE",
-        help="installed app that shows `aa start -U <url>` with ArkWeb; captures the references --references lacks",
+        help="installed app that shows `aa start -U <url>` with ArkWeb, for the arkweb engine",
     )
     group.addoption("--arkweb-viewer-ability", default="EntryAbility", help="the --arkweb-viewer ability to start")
     group.addoption(
@@ -83,10 +82,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar=("NAME", "VALUE"),
         help="start --arkweb-viewer with this `aa start --ps` parameter (repeatable)",
     )
-    group.addoption("--references", type=Path, help="reference renderings, in a folder per device (--reference-key)")
-    group.addoption(
-        "--reference-key", help="the device's folder in --references and --baselines (default: the device's name)"
-    )
+    group.addoption("--reference-key", help="the device's folder in --baselines (default: the device's name)")
     group.addoption(
         "--page-scenarios", type=Path, action="append", default=[], help="folder with a subfolder per page scenario"
     )
@@ -647,21 +643,6 @@ def webdriver(servo: ServoSession) -> WebDriver:
 def artifacts(request: pytest.FixtureRequest, scenario_run: ScenarioRun) -> Path:
     """This test's artifacts folder, for screenshots and other files the test keeps whatever its result."""
     return artifacts_dir(scenario_run, request.node.stash.get(TEST_KEY, request.node.nodeid))
-
-
-@pytest.fixture(scope="session")
-def references(scenario_run: ScenarioRun, platform: Platform, pages: PageServer) -> References:
-    """Reference renderings by ArkWeb: those in the device's folder of --references, and those captured with
-    --arkweb-viewer, which are added to it, or kept with the run's artifacts without --references."""
-    options = scenario_run.config.option
-    if options.references:
-        directory = options.references / _device_key(scenario_run, platform)
-    else:
-        directory = artifacts_dir(scenario_run, "references")
-    viewer = None
-    if options.arkweb_viewer and isinstance(platform, OhosDevice):
-        viewer = ArkWebViewer(platform, options.arkweb_viewer, options.arkweb_viewer_ability, options.arkweb_viewer_ps)
-    return References(ReferenceStore(directory), viewer, pages)
 
 
 def _device_key(run: ScenarioRun, platform: Platform) -> str:
