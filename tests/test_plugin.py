@@ -3,6 +3,8 @@
 import json
 import textwrap
 
+import pytest
+
 from servo_embedder_tests.platform import DesktopHost
 from servo_embedder_tests.plugin import TEST_ARTIFACTS_MARKER
 
@@ -89,6 +91,13 @@ def test_keys_name_non_ascii_parameters_as_they_are(pytester):
     markers = list(out.glob(f"*/{TEST_ARTIFACTS_MARKER}"))
     assert {marker.read_text(encoding="utf-8").strip() for marker in markers} == keys
     assert len(markers) == 2 and all(marker.parent.name.isascii() for marker in markers)
+
+
+def test_reference_engine_version_needs_a_reference_engine(pytester):
+    pytester.makepyfile(test_fake="def test_pass(): pass\n")
+    result = pytester.runpytest("--platform", "desktop", "--reference-engine-version", "v1", "--artifacts", "out")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*--reference-engine-version needs --reference-engine*"])
 
 
 def test_rerun_clears_earlier_artifacts(pytester):
