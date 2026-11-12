@@ -101,7 +101,7 @@ details { margin: 4px 0; } summary { cursor: pointer; }
 
 
 def _load(path: Path) -> dict:
-    return json.loads(path.read_text()) if path.is_file() else {}
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
 def _status(result: Result | None) -> str:
@@ -385,7 +385,7 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
             tests[(match.group(2), match.group(1))] = marker.parent
     renderings: dict[str, list[tuple[Path, dict]]] = {}
     for path in sorted(artifacts.glob("*/rendering.json")):
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         renderings.setdefault(data["scenario"], []).append((path.parent, data))
     if not tests and not renderings:
         return None

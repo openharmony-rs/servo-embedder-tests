@@ -78,12 +78,14 @@ class ReferenceStore:
         shutil.copyfile(image, path)
         index = self._read()
         index[name] = info
-        self._index.write_text(json.dumps(dict(sorted(index.items())), ensure_ascii=False, indent=2) + "\n")
+        self._index.write_text(
+            json.dumps(dict(sorted(index.items())), ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         return path
 
     def _read(self) -> dict[str, dict[str, object]]:
         try:
-            return json.loads(self._index.read_text())
+            return json.loads(self._index.read_text(encoding="utf-8"))
         except FileNotFoundError:
             return {}
 

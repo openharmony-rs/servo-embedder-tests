@@ -162,7 +162,7 @@ def _accept(argv: Sequence[str]) -> int:
     options = parser.parse_args(argv)
     renderings = {}
     for path in sorted(options.artifacts.glob("*/rendering.json")):
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         if data["engine"] == options.engine:
             renderings[data["scenario"]] = (path.parent, data)
     selected = list(options.scenarios)

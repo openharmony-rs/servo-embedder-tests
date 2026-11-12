@@ -70,7 +70,7 @@ class Layout:
 
     @classmethod
     def from_file(cls, path: Path) -> Layout:
-        return cls.from_json(json.loads(path.read_text()))
+        return cls.from_json(json.loads(path.read_text(encoding="utf-8")))
 
     def find_all(
         self, *, type: str | None = None, text: str | None = None, id: str | None = None, visible: bool = True

@@ -260,7 +260,7 @@ class WebViewApp:
             try:
                 step(self.artifacts / name)
             except Exception as error:
-                with (self.artifacts / "errors.txt").open("a") as f:
+                with (self.artifacts / "errors.txt").open("a", encoding="utf-8") as f:
                     f.write(f"{name}: {error}\n")
 
     def finish(self) -> None:
@@ -271,7 +271,9 @@ class WebViewApp:
         if shots:
             screenshots.contact_sheet(shots, self.artifacts / "overview.jpeg")
         if self.started_ms and (faults := self.device.faults(self.started_ms)):
-            (self.artifacts / "faults.json").write_text(json.dumps(faults, ensure_ascii=False, indent=2) + "\n")
+            (self.artifacts / "faults.json").write_text(
+                json.dumps(faults, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
 
     def _keep(self, stem: str, screen: Screen, expect: str) -> None:
         """Keeps the screen as a step, without waiting for it to settle: `screen` is only passing through."""
@@ -297,7 +299,9 @@ class WebViewApp:
 
     def _write_record(self) -> None:
         record = {"bundle": self.bundle, "version": self.version, "steps": self.steps}
-        (self.artifacts / "steps.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+        (self.artifacts / "steps.json").write_text(
+            json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     def _settle(self, dest: Path, box: screenshots.Box, timeout: float = 20) -> None:
         """Takes screenshots until `box` shows the same for SETTLED_FOR seconds and isn't blank, such as a loading

@@ -363,7 +363,7 @@ class Capture:
         return Shot(self.image, self.size, self.scroll[1], tuple(self.masks))
 
     def elements(self) -> list[dict[str, object]]:
-        return json.loads(self.dom.read_text()) if self.dom.is_file() else []
+        return json.loads(self.dom.read_text(encoding="utf-8")) if self.dom.is_file() else []
 
     def meta(self) -> dict[str, object]:
         return {
@@ -432,7 +432,7 @@ class CaptureStore:
 
     def index(self, scenario: str) -> dict[str, object]:
         path = self.directory(scenario) / self.INDEX
-        return json.loads(path.read_text()) if path.is_file() else {}
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
     def captures(self, scenario: str) -> dict[str, Capture]:
         directory = self.directory(scenario)
