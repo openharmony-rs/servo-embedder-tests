@@ -97,7 +97,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         metavar="NAME",
         help="a name for the build of --engine, e.g. a commit: kept with its captures and baselines, and reported",
     )
-    group.addoption("--reference-engine-version", metavar="NAME", help="the same for --reference-engine")
+    group.addoption(
+        "--reference-engine-version",
+        metavar="NAME",
+        help="the same for --reference-engine, for the references it renders in the run; stored ones keep theirs",
+    )
     group.addoption("--baselines", type=Path, help="stored captures of page scenarios, per device and engine")
     group.addoption("--update-baselines", action="store_true", help="store this run's captures as the baselines")
     group.addoption(
@@ -121,6 +125,8 @@ def pytest_configure(config: pytest.Config) -> None:
         "explicit: run only when the command line names the test's file or a folder it is in",
     ):
         config.addinivalue_line("markers", marker)
+    if config.option.reference_engine_version and not config.option.reference_engine:
+        raise pytest.UsageError("--reference-engine-version needs --reference-engine")
     if getattr(config.option, "platform", None) is None or config.option.collectonly:
         return
     config.stash[RUN_KEY] = ScenarioRun(config)

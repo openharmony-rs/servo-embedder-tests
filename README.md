@@ -135,7 +135,8 @@ Each scenario has three tests:
 The first is a regression check: it finds what changed since the baselines were stored, e.g. with an engine update.
 The second is an engine comparison: it finds the gaps between two engines. `--engine-version NAME` and
 `--reference-engine-version NAME` name the builds, e.g. a commit or a release. The name is kept with their captures
-and baselines, so that `diff.json` and the report say which builds were compared.
+and baselines, so that `diff.json` and the report say which builds were compared. Stored references keep the name
+they were rendered with: `--reference-engine-version` names those rendered in the run, see `--update-references`.
 
 The page is rendered once per engine for all three. Known differences between engines go into the expectations of
 `test_matches_reference`, so that they don't hide regressions. The captures of each engine are kept in
