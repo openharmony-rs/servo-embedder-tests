@@ -259,6 +259,10 @@ uvx servo-embedder-tests run --page-scenarios svg-cards --baselines svg-baseline
     --arkweb-viewer <bundle> --chromedriver <chromedriver matching ArkWeb's Chromium>
 ```
 
+`run svg/` loads the SVG pages that probe an engine's limits on nesting, reference cycles and expansion: each must
+load and render within 10 seconds, without crashing servoshell. It also checks that a Content-Security-Policy keeps
+an SVG `<image>` from fetching from another origin.
+
 ## Writing scenarios
 
 Fixtures:
