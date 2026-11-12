@@ -9,14 +9,17 @@ import pytest
 from PIL import Image, ImageDraw
 
 from servo_embedder_tests import cli
-from servo_embedder_tests.engines import ArkWebEngine
+from servo_embedder_tests.engines import ArkWebEngine, Engine
 from servo_embedder_tests.page_scenarios import (
     ERRORS,
     PAGE_CHANGES,
     SEED_RANDOM,
     Capture,
     CaptureStore,
+    PageRuns,
+    Renderer,
     Rendering,
+    Scenario,
     compare_captures,
     discover,
 )
@@ -122,7 +125,7 @@ def test_seeded_math_random_returns_its_fixed_numbers():
     assert numbers == [0.27861995808780193, 0.8225720841437578, 0.2360540598165244]
 
 
-def _rendering(directory, engine="servoshell", heading="Menu", device="rk3568", photo=None):
+def _rendering(directory, engine="servoshell", heading="Menu", device="rk3568", photo=None, version=None):
     directory.mkdir(parents=True, exist_ok=True)
     image = Image.new("RGB", (480, 300), "white")
     ImageDraw.Draw(image).text((20, 20), heading, fill="black", font_size=28)
@@ -134,7 +137,8 @@ def _rendering(directory, engine="servoshell", heading="Menu", device="rk3568", 
         dom.append({"path": "body>img", "text": "", "rect": [20, 100, 200, 120], "image": photo, "src": "/menu/a.jpg"})
     (directory / "page-0.dom.json").write_text(json.dumps(dom))
     capture = Capture("page-0", directory / "page-0.png", directory / "page-0.dom.json", (480, 300), (0, 0), [])
-    rendering = Rendering(engine, "menu", directory, {"page-0": capture}, {"engine": {"engine": engine}})
+    described = {"engine": engine, **({"version": version} if version else {})}
+    rendering = Rendering(engine, "menu", directory, {"page-0": capture}, {"engine": described})
     rendering.write(device)
     return rendering
 
@@ -179,11 +183,15 @@ def test_a_region_names_the_image_that_did_not_load(tmp_path):
 def test_the_report_shows_differences_with_the_triage(tmp_path):
     artifacts = tmp_path / "artifacts"
     store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
-    store.put(_rendering(tmp_path / "old"), reason="--update-baselines")
+    store.put(_rendering(tmp_path / "old", version="v0.8.0-ohos"), reason="--update-baselines")
     rendering = _rendering(artifacts / "page-scenarios_servoshell_menu", heading="Menu!")
     rendering.info["external"] = ["https://fonts.example/a.css", "https://cdn.example/b.js"]
     rendering.write("rk3568")
-    servo = {"engine": "servoshell", "user_agent": "Mozilla/5.0 (OpenHarmony; Mobile) Servo/0.8.0 Firefox/153.0"}
+    servo = {
+        "engine": "servoshell",
+        "user_agent": "Mozilla/5.0 (OpenHarmony; Mobile) Servo/0.8.0 Firefox/153.0",
+        "version": "main@3f2a1b",
+    }
     key = f"{cli.BASELINE_TEST}menu]"
     folder = artifacts / "baseline-menu"
     folder.mkdir()
@@ -225,13 +233,40 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     assert '<span class="status FAIL unexpected">' in page
     stored = store.index("menu")["stored"][:10]
     assert '<span class="kind regression">Regression check</span> servoshell against its baseline' in page
-    assert f"baseline: servoshell, stored {stored} (--update-baselines) · servoshell now: Servo 0.8.0" in page
+    now = "servoshell now: main@3f2a1b · Servo 0.8.0"
+    assert f"baseline: servoshell (v0.8.0-ohos), stored {stored} (--update-baselines) · {now}" in page
     assert '<span class="kind gap">Engine comparison</span> servoshell against arkweb' in page
-    assert "arkweb: ArkWeb 7.0.0.38, Chromium 144.0.7559.59, rendered in this run" in page
-    assert f"servoshell against its baselines, stored {stored}. A difference is a change" in page
+    assert f"arkweb: ArkWeb 7.0.0.38, Chromium 144.0.7559.59, rendered in this run · {now}" in page
+    assert (
+        "servoshell (main@3f2a1b · Servo 0.8.0) against its baselines of servoshell (v0.8.0-ohos), "
+        f"stored {stored}. A difference is a change"
+    ) in page
     assert "servoshell against arkweb (ArkWeb 7.0.0.38, Chromium 144.0.7559.59). A difference is a gap" in page
     assert "<details><summary>2 resource(s) from other origins</summary>" in page
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
+
+
+def test_renderings_carry_the_name_given_to_the_engines_build(tmp_path):
+    described = {"engine": "servoshell", "user_agent": "Servo/0.8.0"}
+    (tmp_path / "servoshell" / "menu").mkdir(parents=True)
+
+    def render(engine, scenario, directory):
+        return Rendering("servoshell", scenario.name, directory, info={"engine": dict(described)})
+
+    runs = PageRuns(
+        {"servoshell": cast(Engine, None)},
+        "servoshell",
+        None,
+        cast(Renderer, SimpleNamespace(render=render)),
+        None,
+        "rk3568",
+        lambda name: tmp_path / name,
+        versions={"servoshell": "main@3f2a1b"},
+    )
+    rendering = runs.rendering("servoshell", cast(Scenario, SimpleNamespace(name="menu")))
+    assert rendering.info["engine"] == {**described, "version": "main@3f2a1b"}
+    written = json.loads((tmp_path / "servoshell" / "menu" / "rendering.json").read_text())
+    assert written["info"]["engine"]["version"] == "main@3f2a1b"
 
 
 def test_accept_stores_the_failed_scenarios(tmp_path, capsys):

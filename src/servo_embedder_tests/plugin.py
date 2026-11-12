@@ -92,6 +92,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     group.addoption("--engine", default="servoshell", help="engine that renders the page scenarios")
     group.addoption("--reference-engine", help="engine whose renderings the page scenarios are compared with")
+    group.addoption(
+        "--engine-version",
+        metavar="NAME",
+        help="a name for the build of --engine, e.g. a commit: kept with its captures and baselines, and reported",
+    )
+    group.addoption("--reference-engine-version", metavar="NAME", help="the same for --reference-engine")
     group.addoption("--baselines", type=Path, help="stored captures of page scenarios, per device and engine")
     group.addoption("--update-baselines", action="store_true", help="store this run's captures as the baselines")
     group.addoption(
@@ -672,6 +678,14 @@ def page_runs(scenario_run: ScenarioRun, platform: Platform, pages: PageServer) 
         lambda name: artifacts_dir(scenario_run, f"page-scenarios/{name}"),
         options.update_baselines,
         options.update_references,
+        {
+            name: version
+            for name, version in (
+                (options.engine, options.engine_version),
+                (options.reference_engine, options.reference_engine_version),
+            )
+            if name and version
+        },
     )
     yield runs
     runs.stop()
