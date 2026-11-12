@@ -121,8 +121,9 @@ python3 skills/compare-renderings/describe_regions.py <test folder> --max-region
 - **When the image model's answer and the measurements disagree,** or the answer is vague ("glyphs differ", "font
   fallback") for a region that reads "shapes differ", don't build a verdict on it: say so, and point the user at the
   crop.
-- **Unsettled or flaky:** the page animates or depends on the network. Add a `mask`, `[page] freeze = true` or local
-  copies of the resources to the scenario. Don't add a tolerance.
+- **Unsettled or flaky:** the page animates, places things with `Math.random()` or depends on the network. Add a
+  `mask`, `[page] freeze = true`, `[page] seed_random = true` or local copies of the resources to the scenario. Don't
+  add a tolerance.
 
 Then record your conclusion for the people who check it: write `triage.json` into each test folder you triaged and
 write the report again. The report shows it next to the pictures, the image model's answers too, so that a person can

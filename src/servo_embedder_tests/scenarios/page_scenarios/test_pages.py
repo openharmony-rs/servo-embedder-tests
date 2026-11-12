@@ -1,6 +1,7 @@
 """The page scenarios in the folders that --page-scenarios names, a subfolder each.
 
-`test_renders` checks that a page gets ready, settles and passes its own checks (`expect_change`, recorded errors).
+`test_renders` checks that a page gets ready, settles and passes its own checks (`expect_change`, recorded errors,
+the seeded `Math.random()`).
 `test_matches_baseline` compares the captures of --engine with its baselines in --baselines, and
 `test_matches_reference` with those of --reference-engine, stored in --baselines or rendered in the run. Each page is
 rendered once per engine for all three. Differences are described in each test's `diff.json`.

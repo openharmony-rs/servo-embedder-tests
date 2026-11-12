@@ -54,8 +54,10 @@ DEFAULTS: dict[str, object] = {
     # Changes to the page, each opt-in and inserted at the start of its `<head>`: `freeze` is a style sheet that turns
     # off CSS animations and transitions (elements show their own style, not an animation's) and hides the caret and
     # scrollbars, and pauses media once the page is ready; `errors` is a script that records script errors, failed
-    # resources and console.error calls, which then fail `test_renders`.
-    "page": {"freeze": False, "errors": False},
+    # resources and console.error calls, which then fail `test_renders`; `seed_random` is a script that makes the
+    # page's `Math.random()` return the same numbers on every load and in every engine, as long as the page calls it in
+    # the same order (not in workers, nor `crypto.getRandomValues()`).
+    "page": {"freeze": False, "errors": False, "seed_random": False},
     # Overrides of the comparison presets (`diffing.Preset` fields).
     "compare": {"baseline": {}, "reference": {}},
     # The steps; without them, one capture named `page` of `segments` viewports.
@@ -107,6 +109,21 @@ ERRORS = """<script>(() => {
     return consoleError.apply(this, args);
   };
 })();</script>"""
+# A seeded generator (mulberry32) in place of Math.random(): the engines seed theirs per load, and pages can't seed
+# them. Changing the seed or the generator changes what pages that use it render, and so invalidates their baselines.
+SEED_RANDOM = """<script>(() => {
+  let state = 0x2f6b8e1d;
+  const random = () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  random.servoEmbedderTests = true;
+  Math.random = random;
+})();</script>"""
+# The `[page]` options that insert something at the start of the page's `<head>`, in the order they are inserted.
+PAGE_CHANGES = (("freeze", FREEZE), ("errors", ERRORS), ("seed_random", SEED_RANDOM))
 VIEWPORT = (
     "return [innerWidth, innerHeight, devicePixelRatio, scrollX, scrollY, document.scrollingElement.scrollHeight]"
 )
@@ -477,7 +494,7 @@ class Renderer:
     def _render(self, engine: Engine, scenario: Scenario, rendering: Rendering) -> None:
         timeout = float(scenario.config["timeout"])  # type: ignore[arg-type]
         if scenario.name not in self._injected:
-            for option, snippet in (("freeze", FREEZE), ("errors", ERRORS)):
+            for option, snippet in PAGE_CHANGES:
                 if scenario.page_option(option):
                     self.pages.inject(f"/{scenario.name}/", snippet)
             self._injected.add(scenario.name)
@@ -507,6 +524,12 @@ class Renderer:
                 rendering.problems.append("the error recording script did not run")
             elif errors:
                 rendering.problems.append(f"{len(errors)} error(s) on the page, the first: {errors[0]}")
+        if scenario.page_option("seed_random") and not driver.execute_script(
+            "return Math.random.servoEmbedderTests === true"
+        ):
+            rendering.problems.append(
+                "Math.random() is not the seeded one: the script did not run, or the page replaced it"
+            )
 
     def _step(
         self, engine: Engine, driver: WebDriver, scenario: Scenario, step: Step, rendering: Rendering, timeout: float

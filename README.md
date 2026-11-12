@@ -187,6 +187,7 @@ timeout = 30                  # seconds to load, and for each capture to settle
 [page]
 freeze = true                 # a style sheet before the page's own: no CSS animations or transitions
 errors = true                 # a script that records errors, failed resources and console.error
+seed_random = true            # Math.random() returns the same numbers on every load and in every engine
 
 [compare.baseline]            # overrides of the presets: tolerance, tile, tile_share, css
 tile_share = 0.05
@@ -199,6 +200,10 @@ hover = "#buy"                # also click, scroll ("top", "bottom", a number or
 capture = "hover"
 expect_change = "#buy"        # fails unless the capture differs from the previous one there
 ```
+
+`seed_random` replaces the page's `Math.random()` with a seeded generator. Its numbers repeat as long as the page asks
+for them in the same order: calls from timers or load events whose order varies, workers and `crypto.getRandomValues()`
+stay random.
 
 The `arkweb` engine and the reference captures take any app as `--arkweb-viewer`, started with its `EntryAbility`
 or `--arkweb-viewer-ability`, and with `--arkweb-viewer-ps NAME VALUE` parameters. The app needs to:
