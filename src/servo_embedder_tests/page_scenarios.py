@@ -434,6 +434,11 @@ class CaptureStore:
         path = self.directory(scenario) / self.INDEX
         return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
+    def origin(self, scenario: str) -> dict[str, object]:
+        """How the stored captures of `scenario` were made and where they are, without their geometry."""
+        index = {key: value for key, value in self.index(scenario).items() if key != "captures"}
+        return {**index, "from": str(self.directory(scenario))}
+
     def captures(self, scenario: str) -> dict[str, Capture]:
         directory = self.directory(scenario)
         raw = self.index(scenario).get("captures", {})
@@ -873,7 +878,7 @@ class PageRuns:
         stored = store.captures(scenario.name) if store else {}
         if stored and not (self.update_references and self.reference in self.engines):
             assert store is not None
-            return stored, {**store.index(scenario.name), "from": str(store.directory(scenario.name))}
+            return stored, store.origin(scenario.name)
         if self.reference not in self.engines:
             return None
         rendering = self.rendering(self.reference, scenario)
