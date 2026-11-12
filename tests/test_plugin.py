@@ -4,6 +4,7 @@ import json
 import textwrap
 
 from servo_embedder_tests.platform import DesktopHost
+from servo_embedder_tests.plugin import TEST_ARTIFACTS_MARKER
 
 pytest_plugins = ["pytester"]
 
@@ -63,6 +64,31 @@ def test_expected_failures_and_unexpected_pass(pytester):
 def test_expected_skip_does_not_run(pytester):
     result, data = run(pytester, '["test_fake.py::test_fail"]\ndefault = "SKIP"\n')
     result.assert_outcomes(passed=1, failed=1, skipped=2)
+
+
+def test_keys_name_non_ascii_parameters_as_they_are(pytester):
+    pytester.makefile(".toml", expectations='["test_names.py::test_page[具身智能]"]\nlinux = "FAIL"\n')
+    pytester.makepyfile(
+        test_names=textwrap.dedent(
+            """
+            import pytest
+
+            @pytest.mark.parametrize("name", ["具身智能", "人形机器人"])
+            def test_page(name, artifacts):
+                assert name != "具身智能"
+            """
+        )
+    )
+    out = pytester.path / "out"
+    result = pytester.runpytest(
+        "--platform", "desktop", "--device-class", "linux", "--expectations", "expectations.toml", "--artifacts", "out"
+    )
+    result.assert_outcomes(passed=1, xfailed=1)
+    keys = set(json.loads((out / "results.json").read_text(encoding="utf-8"))["results"])
+    assert keys == {"test_names.py::test_page[具身智能]", "test_names.py::test_page[人形机器人]"}
+    markers = list(out.glob(f"*/{TEST_ARTIFACTS_MARKER}"))
+    assert {marker.read_text(encoding="utf-8").strip() for marker in markers} == keys
+    assert len(markers) == 2 and all(marker.parent.name.isascii() for marker in markers)
 
 
 def test_rerun_clears_earlier_artifacts(pytester):
