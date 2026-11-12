@@ -32,7 +32,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urllib.parse.urlsplit(self.path).path
+        path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         self.scenario_server.requests.append(path)
         if path in self.scenario_server.dynamic:
             body, content_type = self.scenario_server.dynamic[path]
@@ -51,7 +51,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self._send(200, body, content_type)
 
     def do_POST(self) -> None:  # noqa: N802
-        path = urllib.parse.urlsplit(self.path).path
+        path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
         if path != REPORT_PATH:
             self._send(404, b"not found", "text/plain")
@@ -92,7 +92,6 @@ class _Server(http.server.ThreadingHTTPServer):
 
     def inject(self, path: str, body: bytes) -> bytes:
         """`body` with the snippets for `path` inserted at the start of its `<head>`."""
-        path = urllib.parse.unquote(path)
         snippets = b"".join(snippet for prefix, snippet in self.injections if path.startswith(prefix))
         if not snippets:
             return body
@@ -102,7 +101,7 @@ class _Server(http.server.ThreadingHTTPServer):
         return snippets + body
 
     def find(self, path: str) -> Path | None:
-        relative = urllib.parse.unquote(path).lstrip("/") or "index.html"
+        relative = path.lstrip("/") or "index.html"
         for root in self.roots:
             candidate = (root / relative).resolve()
             if candidate.is_relative_to(root.resolve()) and candidate.is_file():

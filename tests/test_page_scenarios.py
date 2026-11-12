@@ -111,6 +111,16 @@ def test_scripts_are_injected_into_pages_with_non_ascii_names(tmp_path):
     assert "__servoEmbedderTestsErrors" in page
 
 
+def test_pages_added_at_runtime_and_requests_have_decoded_paths(tmp_path):
+    server = PageServer([tmp_path]).start()
+    try:
+        server.add("/菜单.html", "<p>added</p>")
+        page = urllib.request.urlopen(server.url(urllib.parse.quote("菜单.html"))).read().decode()
+    finally:
+        server.stop()
+    assert page == "<p>added</p>" and server.requests == ["/菜单.html"]
+
+
 def test_page_changes_come_before_the_pages_own_scripts(tmp_path):
     root = tmp_path / "pages"
     (root / "stars").mkdir(parents=True)
