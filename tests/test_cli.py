@@ -31,6 +31,21 @@ def test_keeps_local_paths(pytester):
     assert collected(pytester, "ime/test_local.py", "--artifacts", "out/run") == ["ime/test_local.py::test_local"]
 
 
+def test_keys_with_non_ascii_names_select_their_tests(pytester):
+    pytester.makepyfile(
+        test_names="""
+        import pytest
+
+        @pytest.mark.parametrize("name", ["具身智能", "人形机器人"])
+        def test_page(name):
+            pass
+        """
+    )
+    assert collected(pytester, "test_names.py::test_page[具身智能]") == ["test_names.py::test_page[具身智能]"]
+    escaped = "test_names.py::test_page[\\u4eba\\u5f62\\u673a\\u5668\\u4eba]"
+    assert collected(pytester, escaped) == ["test_names.py::test_page[人形机器人]"]
+
+
 def test_extra_adds_to_bundled_suite(pytester):
     pytester.mkdir("more")
     (pytester.path / "more" / "test_more.py").write_text("def test_more(): pass\n")

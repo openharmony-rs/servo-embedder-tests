@@ -30,6 +30,13 @@ def _bundled(arg: str) -> str | None:
     return str(BUNDLED_SCENARIOS / arg)
 
 
+def _escaped(arg: str) -> str:
+    """`arg` with the non-ASCII characters of its test name escaped, as pytest writes them in test ids, so that a test
+    key (see `test_key`) selects its test."""
+    path, separator, name = arg.partition("::")
+    return path + separator + name.encode("ascii", "backslashreplace").decode("ascii")
+
+
 class _Selection:
     """Runs the bundled suite unless the arguments name tests, finds named tests in it, and adds the `--extra`
     directories. Works on the positional arguments as pytest parsed them, so option values are never tests."""
@@ -39,7 +46,7 @@ class _Selection:
 
     def pytest_configure(self, config: pytest.Config) -> None:
         if config.args_source == pytest.Config.ArgsSource.ARGS:
-            args = [_bundled(arg) or arg for arg in config.args]
+            args = [_escaped(_bundled(arg) or arg) for arg in config.args]
         elif config.getoption("page_scenarios", None):
             args = [str(BUNDLED_SCENARIOS / "page_scenarios")]
         else:
