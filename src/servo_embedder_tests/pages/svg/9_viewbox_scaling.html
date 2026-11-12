@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG - ViewBox & Scaling</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 5px;
+        }
+        h1 {
+            border-bottom: 2px solid #d2d2d7;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+        }
+        .test-card {
+            background: #ffffff;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            padding: 5px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .test-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            width: 100%;
+            text-align: left;
+            color: #86868b;
+        }
+        .test-card p {
+            margin: 8px 0 0 0;
+            font-size: 12px;
+            color: #515154;
+            width: 100%;
+            line-height: 1.4;
+        }
+        svg {
+            background-color: #fafafa;
+            border: 1px dashed #bcbcf2;
+            width: 350px;
+            height: 100px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>SVG - ViewBox & Scaling</h1>
+    
+    <div class="grid">
+
+        <!-- Card 1: Default ViewBox Scaling (No explicit preserveAspectRatio attribute) -->
+        <div class="test-card">
+            <h3>1. Basic ViewBox Coordinates (Default preserveAspectRatio behavior)</h3>
+            <svg width="350" height="100" viewBox="0 0 350 100">
+                <!-- Matching ratio (350x100 into 350x100) -->
+                <rect x="10" y="10" width="80" height="80" fill="#e5e5ea" stroke="#007aff" stroke-width="2"/>
+                <circle cx="50" cy="50" r="30" fill="#34c759"/>
+                
+                <!-- Nested sub-viewports testing default scaling without explicit preserveAspectRatio -->
+                <svg x="100" y="10" width="110" height="80" viewBox="0 0 50 50">
+                    <rect x="0" y="0" width="50" height="50" fill="#e5f5e5" stroke="#34c759"/>
+                    <circle cx="25" cy="25" r="20" fill="#ff9500"/>
+                </svg>
+                
+                <svg x="225" y="10" width="110" height="80" viewBox="0 0 100 50">
+                    <rect x="0" y="0" width="100" height="50" fill="#f0f0f7" stroke="#5856d6"/>
+                    <polygon points="50,10 80,40 20,40" fill="#af52de"/>
+                </svg>
+            </svg>
+            <p>Tests baseline <code>viewBox</code> mapping relying solely on SVG default scaling (<code>xMidYMid meet</code> implicit) without specifying explicit attributes.</p>
+        </div>
+
+        <!-- Card 2: Explicit preserveAspectRatio Modes (slice vs none) -->
+        <div class="test-card">
+            <h3>2. Explicit preserveAspectRatio Modes (slice vs none)</h3>
+            <svg width="350" height="100" viewBox="0 0 350 100">
+                <!-- slice mode via nested svg -->
+                <svg x="20" y="10" width="140" height="80" viewBox="0 0 50 50" preserveAspectRatio="xMidYMid slice">
+                    <rect x="0" y="0" width="50" height="50" fill="#e5f5e5" stroke="#34c759"/>
+                    <circle cx="25" cy="25" r="30" fill="#ff9500"/>
+                    <polygon points="25,10 35,40 15,40" fill="#ffffff"/>
+                </svg>
+                <!-- none mode via nested svg -->
+                <svg x="190" y="10" width="140" height="80" viewBox="0 0 50 50" preserveAspectRatio="none">
+                    <rect x="0" y="0" width="50" height="50" fill="#f0f0f7" stroke="#5856d6"/>
+                    <circle cx="25" cy="25" r="20" fill="#af52de"/>
+                    <line x1="5" y1="5" x2="45" y2="45" stroke="#ffffff" stroke-width="3"/>
+                </svg>
+            </svg>
+            <p>Compares explicit clipping fill scaling (<code>slice</code>) on the left against direct non-uniform stretching (<code>none</code>) on the right.</p>
+        </div>
+
+        <!-- Card 3: Explicit Axis Alignment Variations -->
+        <div class="test-card">
+            <h3>3. Explicit Alignments (xMinYMid, xMidYMin, xMaxYMax)</h3>
+            <svg width="350" height="100" viewBox="0 0 350 100">
+                <!-- xMin Alignment -->
+                <svg x="10" y="10" width="100" height="80" viewBox="0 0 40 40" preserveAspectRatio="xMinYMid meet">
+                    <rect x="0" y="0" width="40" height="40" fill="#ffe5e5" stroke="#ff3b30"/>
+                    <circle cx="20" cy="20" r="15" fill="#ff9500"/>
+                </svg>
+                <!-- xMid / YMin Alignment -->
+                <svg x="125" y="10" width="100" height="80" viewBox="0 0 40 40" preserveAspectRatio="xMidYMin meet">
+                    <rect x="0" y="0" width="40" height="40" fill="#e5e5ea" stroke="#007aff"/>
+                    <circle cx="20" cy="20" r="15" fill="#34c759"/>
+                </svg>
+                <!-- xMax / YMax Alignment -->
+                <svg x="240" y="10" width="100" height="80" viewBox="0 0 40 40" preserveAspectRatio="xMaxYMax meet">
+                    <rect x="0" y="0" width="40" height="40" fill="#e5f5e5" stroke="#34c759"/>
+                    <circle cx="20" cy="20" r="15" fill="#5856d6"/>
+                </svg>
+            </svg>
+            <p>Tests explicit positioning rules: <code>xMinYMid</code> (left), <code>xMidYMin</code> (top center), and <code>xMaxYMax</code> (bottom right).</p>
+        </div>
+
+        <!-- Card 4: ViewBox Offsets & Overflow Behavior -->
+        <div class="test-card">
+            <h3>4. Negative ViewBox Min Offsets & Overflow Rendering</h3>
+            <svg width="350" height="100" viewBox="-150 -50 350 100" style="overflow: visible;">
+                <!-- Axis lines intersecting at origin (0,0) -->
+                <line x1="-150" y1="0" x2="200" y2="0" stroke="#d2d2d7" stroke-dasharray="4,4"/>
+                <line x1="0" y1="-50" x2="0" y2="50" stroke="#d2d2d7" stroke-dasharray="4,4"/>
+                <!-- Center origin shape -->
+                <circle cx="0" cy="0" r="25" fill="#007aff" opacity="0.7"/>
+                <circle cx="0" cy="0" r="4" fill="#ff3b30"/>
+                <!-- Shapes rendering outside standard viewBox limits -->
+                <rect x="-140" y="-30" width="30" height="60" fill="#ff9500"/>
+                <rect x="160" y="-30" width="30" height="60" fill="#34c759"/>
+                <polygon points="0,-45 20,-15 -20,-15" fill="#5856d6"/>
+            </svg>
+            <p>Uses negative min-x/min-y parameters without explicit <code>preserveAspectRatio</code>, testing default scaling alongside <code>overflow: visible</code>.</p>
+        </div>
+
+    </div>
+
+</body>
+</html>

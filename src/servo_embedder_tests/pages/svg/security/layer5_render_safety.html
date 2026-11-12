@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Layer 5 — Render safety guard (self-referencing pattern)</title>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+  <defs>
+    <!-- Self-referencing pattern: the pattern's own fill points back at #p. -->
+    <pattern id="p" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="url(#p)"/>
+    </pattern>
+  </defs>
+
+  <rect width="200" height="200" fill="url(#p)"/>
+</svg>
+
+<!--
+  Expected: no hang, no crash. Paint-server reference depth is capped by
+  MAX_PAINT_SERVER_DEPTH in components/svg/render/renderer/render_trait.rs,
+  so the self-reference terminates. Run with:
+    ./target/debug/servoshell.exe -z --window-size=200x200 -o out.png \
+      file:///D:/Projects/svg-tests/security/layer5_render_safety.html \
+      --pref layout_servo_svg_enabled
+-->
+</body>
+</html>

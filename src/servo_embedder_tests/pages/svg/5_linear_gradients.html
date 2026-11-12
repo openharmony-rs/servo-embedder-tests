@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Engine Test: 5_linear_gradients.html</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            border-bottom: 2px solid #d2d2d7;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .test-card {
+            background: #ffffff;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .test-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            width: 100%;
+            text-align: left;
+            color: #86868b;
+        }
+        .test-card p {
+            margin: 8px 0 0 0;
+            font-size: 12px;
+            color: #515154;
+            width: 100%;
+            line-height: 1.4;
+        }
+        svg {
+            background-color: #fafafa;
+            border: 1px dashed #bcbcf2;
+            width: 200px;
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>SVG Engine Test Suite: Linear Gradients</h1>
+    
+    <div class="grid">
+
+        <!-- 1. DEFAULT AXIS DIRECTION -->
+        <div class="test-card">
+            <h3>Test 5.1: Default Axis Orientation</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <!-- Specification default: x1=0%, y1=0%, x2=100%, y2=0% -->
+                    <linearGradient id="grad-default">
+                        <stop offset="0%" stop-color="#007aff" />
+                        <stop offset="100%" stop-color="#34c759" />
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="10" width="80" height="80" fill="url(#grad-default)" />
+            </svg>
+            <p><strong>Expect:</strong> Horizontal gradient transitioning smoothly from left (blue) to right (green). Omitting structural vector coordinates must resolve to default horizontal settings.</p>
+        </div>
+
+        <!-- 2. EXPLICIT ANGLES AND VECTOR PATHS -->
+        <div class="test-card">
+            <h3>Test 5.2: Varying Angles (Diagonal &amp; Vertical)</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <!-- Vertical Gradient Top-to-Bottom -->
+                    <linearGradient id="grad-vertical" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stop-color="#ff3b30" />
+                        <stop offset="100%" stop-color="#ff9500" />
+                    </linearGradient>
+                    <!-- Diagonal Gradient TopLeft-to-BottomRight -->
+                    <linearGradient id="grad-diagonal" x1="0" y1="0" x2="1" y2="1">
+                        <stop offset="0%" stop-color="#af52de" />
+                        <stop offset="100%" stop-color="#5ac8fa" />
+                    </linearGradient>
+                </defs>
+                <!-- Top box: vertical -->
+                <rect x="10" y="10" width="80" height="35" fill="url(#grad-vertical)" />
+                <!-- Bottom box: diagonal -->
+                <rect x="10" y="55" width="80" height="35" fill="url(#grad-diagonal)" />
+            </svg>
+            <p><strong>Expect:</strong> Top rectangle blends vertically from red down to orange. Bottom rectangle blends diagonally from top-left (purple) down to bottom-right (light blue).</p>
+        </div>
+
+        <!-- 3. MULTIPLE COLOR STOPS -->
+        <div class="test-card">
+            <h3>Test 5.3: Multiple Color Stops</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <linearGradient id="grad-multi" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#ff3b30" />
+                        <stop offset="33%" stop-color="#ffcc00" />
+                        <stop offset="66%" stop-color="#34c759" />
+                        <stop offset="100%" stop-color="#007aff" />
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="10" width="80" height="80" fill="url(#grad-multi)" />
+            </svg>
+            <p><strong>Expect:</strong> Smooth multi-band progression from left to right: red, yellow, green, then blue. Color transitions must scale gracefully at their designated offset positions.</p>
+        </div>
+
+        <!-- 4. STOP OPACITY SEGREGATION -->
+        <div class="test-card">
+            <h3>Test 5.4: Opacity Stops</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <linearGradient id="grad-opacity" x1="0%" y1="0%" x2="100%" y2="0%">
+                        <stop offset="0%" stop-color="#1d1d1f" stop-opacity="1" />
+                        <stop offset="50%" stop-color="#1d1d1f" stop-opacity="0.1" />
+                        <stop offset="100%" stop-color="#1d1d1f" stop-opacity="1" />
+                    </linearGradient>
+                </defs>
+                <!-- Red background pattern to test transparency passing -->
+                <g fill="#ff3b30">
+                    <rect x="15" y="15" width="20" height="70" />
+                    <rect x="40" y="15" width="20" height="70" />
+                    <rect x="65" y="15" width="20" height="70" />
+                </g>
+                <rect x="10" y="10" width="80" height="80" fill="url(#grad-opacity)" />
+            </svg>
+            <p><strong>Expect:</strong> Black overlay gradient. Solid black on the far edges, fading to near transparency in the center, allowing the background red vertical bars to become highly visible.</p>
+        </div>
+
+        <!-- 5. SPREAD METHOD: PAD -->
+        <div class="test-card">
+            <h3>Test 5.5: Spread Method - Pad</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <!-- Restrained bounds to test edge clamp styling -->
+                    <linearGradient id="spread-pad" x1="30%" y1="0%" x2="70%" y2="0%" spreadMethod="pad">
+                        <stop offset="0%" stop-color="#007aff" />
+                        <stop offset="100%" stop-color="#ffcc00" />
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="10" width="80" height="80" fill="url(#spread-pad)" />
+            </svg>
+            <p><strong>Expect:</strong> Dynamic color blend between 30% and 70%. Areas before 30% are clamped to solid blue. Areas after 70% are clamped to solid yellow.</p>
+        </div>
+
+        <!-- 6. SPREAD METHOD: REFLECT -->
+        <div class="test-card">
+            <h3>Test 5.6: Spread Method - Reflect</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <linearGradient id="spread-reflect" x1="40%" y1="0%" x2="60%" y2="0%" spreadMethod="reflect">
+                        <stop offset="0%" stop-color="#af52de" />
+                        <stop offset="100%" stop-color="#34c759" />
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="10" width="80" height="80" fill="url(#spread-reflect)" />
+            </svg>
+            <p><strong>Expect:</strong> Mirrored repeating ribbons. Transitions outwards from green to purple, back to green, repeating mirrored patterns across boundaries seamlessly.</p>
+        </div>
+
+        <!-- 7. SPREAD METHOD: REPEAT -->
+        <div class="test-card">
+            <h3>Test 5.7: Spread Method - Repeat</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <linearGradient id="spread-repeat" x1="40%" y1="0%" x2="60%" y2="0%" spreadMethod="repeat">
+                        <stop offset="0%" stop-color="#af52de" />
+                        <stop offset="100%" stop-color="#34c759" />
+                    </linearGradient>
+                </defs>
+                <rect x="10" y="10" width="80" height="80" fill="url(#spread-repeat)" />
+            </svg>
+            <p><strong>Expect:</strong> Sawtooth repeating intervals. Loops sharply from green back to purple at boundaries without mirroring, forming abrupt hard structural seams.</p>
+        </div>
+
+        <!-- 8. GRADIENT UNITS: USERSPACEONUSE vs OBJECTBOUNDINGBOX -->
+        <div class="test-card">
+            <h3>Test 5.8: Coordinate Spaces</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <!-- objectBoundingBox: scales relative to target geometry bounds -->
+                    <linearGradient id="unit-bbox" x1="0" y1="0" x2="1" y2="0" gradientUnits="objectBoundingBox">
+                        <stop offset="0%" stop-color="#007aff" />
+                        <stop offset="100%" stop-color="#ff9500" />
+                    </linearGradient>
+                    <!-- userSpaceOnUse: resolves strictly to system canvas coordinates -->
+                    <linearGradient id="unit-user" x1="10" y1="0" x2="90" y2="0" gradientUnits="userSpaceOnUse">
+                        <stop offset="0%" stop-color="#007aff" />
+                        <stop offset="100%" stop-color="#ff9500" />
+                    </linearGradient>
+                </defs>
+                <!-- Both rectangles share identical width dimensions, but sit at offset X positions -->
+                <rect x="10" y="15" width="40" height="30" fill="url(#unit-bbox)" />
+                <rect x="10" y="55" width="40" height="30" fill="url(#unit-user)" />
+            </svg>
