@@ -388,6 +388,8 @@ def pytest_runtest_makereport(
         status = "CRASH"
     elif status in ("FAIL", "TIMEOUT") and any(_crashed(app) for app in webview_apps):
         status = "CRASH"
+    if isinstance(session, ServoSession) and status not in ("PASS", "SKIP"):
+        session.restart_on_reuse = True
     if status == "SKIP":
         run.report.results[key] = Result(key, "SKIP", expected, str(call.excinfo.value) if call.excinfo else "")
         return report
@@ -502,6 +504,8 @@ class ServoSession:
         self.hilog = hilog
         self.proxy = proxy
         self.hilog_mark = hilog.mark() if hilog else 0
+        # Set after a test that didn't pass, which may have left servoshell busy or broken for the next one.
+        self.restart_on_reuse = False
         self._driver: WebDriver | None = None
 
     @property
@@ -548,11 +552,13 @@ class ServoSession:
         self.app.stop()
 
     def reuse(self, item: pytest.Item) -> ServoSession:
-        """Makes this the session of the test `item`, (re)starting servoshell unless it already runs."""
+        """Makes this the session of the test `item`, (re)starting servoshell unless it already runs and the previous
+        test passed."""
         self.item = item
         self.hilog_mark = self.hilog.mark() if self.hilog else 0
-        if self._driver is not None and _is_running(self.app):
+        if self._driver is not None and _is_running(self.app) and not self.restart_on_reuse:
             return self
+        self.restart_on_reuse = False
         try:
             self.start()
         except Exception:
@@ -621,7 +627,8 @@ def shared_servo(
     _webdriver_forward: int,
 ) -> Iterator[ServoSession]:
     """servoshell shared by the tests of a module, which get it from a `servo` fixture of the module that returns
-    `shared_servo.reuse(request.node)`. It starts with the markers of the test that starts it, so mark the module."""
+    `shared_servo.reuse(request.node)`. It starts with the markers of the test that starts it, so mark the module.
+    A test after one that didn't pass gets it restarted."""
     session = _new_session(request, scenario_run, platform)
     yield session
     session.stop()

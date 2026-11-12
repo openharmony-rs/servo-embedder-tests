@@ -5,6 +5,7 @@ import textwrap
 
 import pytest
 
+from servo_embedder_tests import plugin
 from servo_embedder_tests.platform import DesktopHost
 from servo_embedder_tests.plugin import TEST_ARTIFACTS_MARKER
 
@@ -151,6 +152,63 @@ def test_device_loss_keeps_results(pytester, monkeypatch):
     assert data["results"]["test_fake.py::test_pass"]["status"] == "PASS"
     assert data["results"]["test_fake.py::test_fail"]["status"] == "FAIL"
     assert data["results"]["test_fake.py::test_fail"]["message"].startswith("AssertionError: broken")
+
+
+def test_a_shared_servoshell_restarts_after_a_test_that_did_not_pass(pytester, monkeypatch):
+    # The conftest below replaces it for the whole process; this restores it after the test.
+    monkeypatch.setattr(plugin, "connect", plugin.connect)
+    pytester.makeconftest(
+        textwrap.dedent(
+            """
+            import pytest
+            from servo_embedder_tests import plugin
+
+            class Driver:
+                page_source = ""
+
+                def save_screenshot(self, path):
+                    pass
+
+                def quit(self):
+                    pass
+
+            plugin.connect = lambda port, alive: Driver()
+
+            class App:
+                starts = 0
+
+                def start(self, url, port, prefs, args):
+                    App.starts += 1
+
+                def is_running(self):
+                    return True
+
+                def stop(self):
+                    pass
+
+            @pytest.fixture(scope="module")
+            def shared(request, scenario_run):
+                yield plugin.ServoSession(scenario_run, App(), request.node, None, None)
+
+            @pytest.fixture
+            def servo(request, shared):
+                return shared.reuse(request.node)
+            """
+        )
+    )
+    pytester.makepyfile(
+        test_fake=textwrap.dedent(
+            """
+            def test_first(servo): assert servo.app.starts == 1
+            def test_still_the_first(servo): assert servo.app.starts == 1
+            def test_fail(servo): assert False
+            def test_restarted(servo): assert servo.app.starts == 2
+            def test_not_again(servo): assert servo.app.starts == 2
+            """
+        )
+    )
+    result = pytester.runpytest("--platform", "desktop", "--device-class", "linux", "--artifacts", "out")
+    result.assert_outcomes(passed=4, failed=1)
 
 
 def test_plugins_add_and_replace_engines(pytester):
