@@ -48,10 +48,7 @@ def test_matches_baseline(scenario, page_runs, artifacts):
         artifacts,
         ("baseline", page_runs.engine),
         page_runs.stored_reference(scenario),
-        lambda: {
-            "expected": {**store.index(scenario.name), "from": str(store.directory(scenario.name))},
-            "actual": rendering.info.get("engine"),
-        },
+        lambda: {"expected": store.origin(scenario.name), "actual": rendering.info.get("engine")},
     )
     assert comparison.matches, comparison.message(f"the baseline in {store.directory(scenario.name)}")
 

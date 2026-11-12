@@ -218,7 +218,8 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     folder = artifacts / "baseline-menu"
     folder.mkdir()
     (folder / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
-    origin = {**store.index("menu"), "from": str(store.directory("menu"))}
+    origin = store.origin("menu")
+    assert "captures" not in origin and origin["from"] == str(store.directory("menu"))
     compare_captures(
         store.captures("menu"),
         rendering,
