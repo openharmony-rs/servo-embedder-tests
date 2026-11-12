@@ -27,34 +27,6 @@ def test_difference_only_counts_the_box(tmp_path):
     assert screenshots.difference(_save(tmp_path / "d.jpeg"), _save(tmp_path / "e.jpeg", 340), BOX) < 1
 
 
-def _shapes(path, scale, dx=0):
-    """A 100x50 CSS pixel rendering at `scale` device pixels per CSS pixel, with a circle moved right by `dx`."""
-    image = Image.new("RGB", (100 * scale, 50 * scale), "white")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((10 * scale, 10 * scale, 40 * scale, 40 * scale), fill="blue")
-    draw.ellipse(((60 + dx) * scale, 10 * scale, (90 + dx) * scale, 40 * scale), fill="red")
-    image.save(path)
-    return path
-
-
-def test_compare_ignores_the_device_pixel_ratio(tmp_path):
-    result = screenshots.compare(_shapes(tmp_path / "a.png", 2), _shapes(tmp_path / "b.png", 3), (100, 50), 48)
-    assert result.pixels == 5000
-    assert result.ratio < 0.01
-
-
-def test_compare_counts_moved_content(tmp_path):
-    diff = tmp_path / "diff.png"
-    result = screenshots.compare(
-        _shapes(tmp_path / "a.png", 2), _shapes(tmp_path / "b.png", 2, dx=5), (100, 50), 48, diff
-    )
-    assert 200 < result.differing < 400
-    assert result.max_difference == 255
-    with Image.open(diff) as image:
-        assert image.size == (100, 50)
-        assert image.getpixel((62, 25)) == (255, 0, 0)
-
-
 def _page(path, offset, header=0, seed=37):
     """A 200x800 page of random rows, scrolled by `offset` rows, under a fixed header of `header` rows."""
     rows = [random.Random(seed * 10_000 + y).choices(range(256), k=20) for y in range(1000)]

@@ -214,7 +214,7 @@ for them in the same order: calls from timers, animation frames or load events w
 to load, e.g. a script that adds a random star every frame, still differ; workers and `crypto.getRandomValues()` stay
 random.
 
-The `arkweb` engine and the reference captures take any app as `--arkweb-viewer`, started with its `EntryAbility`
+The `arkweb` engine takes any app as `--arkweb-viewer`, started with its `EntryAbility`
 or `--arkweb-viewer-ability`, and with `--arkweb-viewer-ps NAME VALUE` parameters. The app needs to:
 
 - show `<url>` in an ArkWeb `Web` component when `aa start -a <ability> -b <bundle> -U <url>` cold-starts it, and
