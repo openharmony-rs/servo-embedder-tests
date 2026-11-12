@@ -94,6 +94,27 @@ def test_keys_name_non_ascii_parameters_as_they_are(pytester):
     assert len(markers) == 2 and all(marker.parent.name.isascii() for marker in markers)
 
 
+def test_a_marker_shortens_the_timeout_of_a_test(pytester):
+    pytester.makepyfile(
+        test_slow=textwrap.dedent(
+            """
+            import time
+            import pytest
+
+            @pytest.mark.scenario_timeout(0.2)
+            def test_marked(): time.sleep(2)
+
+            def test_unmarked(): time.sleep(0.4)
+            """
+        )
+    )
+    pytester.runpytest("--platform", "desktop", "--device-class", "linux", "--artifacts", "out")
+    results = json.loads((pytester.path / "out" / "results.json").read_text())["results"]
+    assert results["test_slow.py::test_marked"]["status"] == "TIMEOUT"
+    assert "exceeded its scenario_timeout of 0.2s" in results["test_slow.py::test_marked"]["message"]
+    assert results["test_slow.py::test_unmarked"]["status"] == "PASS"
+
+
 def test_reference_engine_version_needs_a_reference_engine(pytester):
     pytester.makepyfile(test_fake="def test_pass(): pass\n")
     result = pytester.runpytest("--platform", "desktop", "--reference-engine-version", "v1", "--artifacts", "out")

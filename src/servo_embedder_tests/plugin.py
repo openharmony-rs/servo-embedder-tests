@@ -123,6 +123,7 @@ def pytest_configure(config: pytest.Config) -> None:
         "servo_args(*args): extra servoshell arguments for this test",
         "platform(*families): run only on these platform families (ohos, desktop)",
         "explicit: run only when the command line names the test's file or a folder it is in",
+        "scenario_timeout(seconds): a shorter timeout for this test than --scenario-timeout",
     ):
         config.addinivalue_line("markers", marker)
     if config.option.reference_engine_version and not config.option.reference_engine:
@@ -350,12 +351,15 @@ def _crashed(app: WebViewApp) -> bool:
 
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_call(item: pytest.Item) -> Iterator[None]:
-    timeout = item.config.option.scenario_timeout if RUN_KEY in item.config.stash else 0
+    option = item.config.option.scenario_timeout if RUN_KEY in item.config.stash else 0
+    marker = item.get_closest_marker("scenario_timeout")
+    timeout = min(option, float(marker.args[0])) if option and marker else option
     if not timeout or not hasattr(signal, "SIGALRM"):
         return (yield)
 
     def expire(signum: int, frame: object) -> None:
-        raise ScenarioTimeout(f"test exceeded --scenario-timeout={timeout}s")
+        limit = f"--scenario-timeout={timeout}s" if timeout == option else f"its scenario_timeout of {timeout:g}s"
+        raise ScenarioTimeout(f"test exceeded {limit}")
 
     previous = signal.signal(signal.SIGALRM, expire)
     signal.setitimer(signal.ITIMER_REAL, timeout)

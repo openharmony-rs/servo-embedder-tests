@@ -279,7 +279,8 @@ Pages that load `report.js` can call `report({...})`; tests read the objects wit
 `pages.wait_for_report(predicate)`. That works without WebDriver, e.g. for IME scenarios, where
 servoshell must run as a user would.
 
-Markers: `network`, `platform("ohos")`, `servo_prefs(name=value)`, `servo_args("--flag")`, `explicit`.
+Markers: `network`, `platform("ohos")`, `servo_prefs(name=value)`, `servo_args("--flag")`, `explicit`,
+`scenario_timeout(seconds)` (a shorter timeout than `--scenario-timeout`, which then reports TIMEOUT).
 
 `servo_embedder_tests.touch` turns a WebDriver element into a screen point and taps it through the OS. Use
 it when the test is about the platform path: WebDriver clicks enter Servo below ArkUI.
