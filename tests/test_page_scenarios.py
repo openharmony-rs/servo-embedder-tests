@@ -179,24 +179,58 @@ def test_a_region_names_the_image_that_did_not_load(tmp_path):
 def test_the_report_shows_differences_with_the_triage(tmp_path):
     artifacts = tmp_path / "artifacts"
     store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
-    store.put(_rendering(tmp_path / "old"))
+    store.put(_rendering(tmp_path / "old"), reason="--update-baselines")
     rendering = _rendering(artifacts / "page-scenarios_servoshell_menu", heading="Menu!")
+    rendering.info["external"] = ["https://fonts.example/a.css", "https://cdn.example/b.js"]
+    rendering.write("rk3568")
+    servo = {"engine": "servoshell", "user_agent": "Mozilla/5.0 (OpenHarmony; Mobile) Servo/0.8.0 Firefox/153.0"}
     key = f"{cli.BASELINE_TEST}menu]"
     folder = artifacts / "baseline-menu"
     folder.mkdir()
     (folder / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
-    compare_captures(store.captures("menu"), rendering, store_preset(), folder, ("baseline", "servoshell"))
+    origin = {**store.index("menu"), "from": str(store.directory("menu"))}
+    compare_captures(
+        store.captures("menu"),
+        rendering,
+        store_preset(),
+        folder,
+        ("baseline", "servoshell"),
+        describe=lambda: {"expected": origin, "actual": servo},
+    )
     answer = {"crop": "regions/page-0-0.png", "main": "an exclamation mark <added>", "verdict": "neutral"}
     (folder / "vision.json").write_text(json.dumps({"model": "m", "answer": {"regions": [answer]}}))
     triage = {"agent": "a", "verdict": "intended", "summary": "new heading", "regions": {"page-0-0": "added text"}}
     (folder / "triage.json").write_text(json.dumps(triage))
+    reference_key = "page_scenarios/test_pages.py::test_matches_reference[menu]"
+    reference = artifacts / "reference-menu"
+    reference.mkdir()
+    (reference / TEST_ARTIFACTS_MARKER).write_text(reference_key + "\n")
+    arkweb = {"engine": "arkweb", "arkweb": "7.0.0.38", "chromium": "144.0.7559.59"}
+    compare_captures(
+        store.captures("menu"),
+        rendering,
+        store_preset(),
+        reference,
+        ("arkweb", "servoshell"),
+        describe=lambda: {"expected": {"engine": arkweb, "from": "rendered in this run"}, "actual": servo},
+    )
     result = {"key": key, "status": "FAIL", "expected": ["PASS"], "message": "1 capture(s) differ"}
-    (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": {key: result}}))
+    reference_result = {"key": reference_key, "status": "FAIL", "expected": ["FAIL"], "message": "differ"}
+    results = {key: result, reference_key: reference_result}
+    (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": results}))
     assert cli.main(["report", str(artifacts)]) == 0
     page = (artifacts / "report.html").read_text()
     assert 'src="baseline-menu/page-0-expected.png"' in page and 'class="box"' in page
     assert "an exclamation mark &lt;added&gt;" in page and "added text" in page and "new heading" in page
     assert '<span class="status FAIL unexpected">' in page
+    stored = store.index("menu")["stored"][:10]
+    assert '<span class="kind regression">Regression check</span> servoshell against its baseline' in page
+    assert f"baseline: servoshell, stored {stored} (--update-baselines) · servoshell now: Servo 0.8.0" in page
+    assert '<span class="kind gap">Engine comparison</span> servoshell against arkweb' in page
+    assert "arkweb: ArkWeb 7.0.0.38, Chromium 144.0.7559.59, rendered in this run" in page
+    assert f"servoshell against its baselines, stored {stored}. A difference is a change" in page
+    assert "servoshell against arkweb (ArkWeb 7.0.0.38, Chromium 144.0.7559.59). A difference is a gap" in page
+    assert "<details><summary>2 resource(s) from other origins</summary>" in page
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
 
 

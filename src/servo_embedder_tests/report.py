@@ -1,7 +1,9 @@
 """The page scenario report: `report.html` in a run's artifacts folder, for people to see what differs.
 
 Per scenario it shows each differing capture next to what it was compared with, with the differing regions numbered,
-their enlarged crops and what the comparison measured. Where an agent triaged the run, it adds the image model's
+their enlarged crops and what the comparison measured. It tells the two kinds of comparison apart: a regression check
+(an engine against its own baselines, e.g. after an update) and an engine comparison (against another engine's
+renderings, its gaps). Where an agent triaged the run, it adds the image model's
 answers (`vision.json`, from the compare-renderings skill) and the agent's conclusion (`triage.json`), so that people
 can check them against the pictures:
 
@@ -25,7 +27,22 @@ REPORT = "report.html"
 TRIAGE = "triage.json"
 VISION = "vision.json"
 TESTS = {"test_renders": "renders", "test_matches_baseline": "baseline", "test_matches_reference": "reference"}
+# The comparisons: their name, CSS class and what a difference means.
+KINDS = {
+    "test_matches_baseline": (
+        "Regression check",
+        "regression",
+        "A difference is a change since the baselines were stored: a regression, or an improvement to accept as the "
+        "new baseline.",
+    ),
+    "test_matches_reference": (
+        "Engine comparison",
+        "gap",
+        "A difference is a gap between the two engines, not a change; known gaps belong in the expectations.",
+    ),
+}
 KEY = re.compile(r"^page_scenarios/test_pages\.py::(test_\w+)\[(.+)\]$")
+SERVO = re.compile(r"\bServo/(\S+)")
 
 STYLE = """
 :root {
@@ -75,6 +92,11 @@ dd { margin: 0; }
 .note { background: var(--note); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
 .note p { margin: 4px 0; }
 pre { white-space: pre-wrap; word-break: break-word; background: var(--card); padding: 8px; border-radius: 6px; }
+.kind { display: inline-block; padding: 3px 6px; border-radius: 3px; color: #fff;
+  font: 600 11px/1 system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.04em; vertical-align: 2px; }
+.kind.regression { background: #8a5a00; } .kind.gap { background: #5b3fa0; }
+.overview { list-style: none; padding: 0; margin: 8px 0; } .overview li { margin: 4px 0; }
+details { margin: 4px 0; } summary { cursor: pointer; }
 """
 
 
@@ -112,6 +134,77 @@ def _dom_change(change: dict) -> str:
         old, new = change["rect"]
         parts.append(f"box {escape(str(old))} → {escape(str(new))}")
     return "; ".join(parts)
+
+
+def _who(info: object, label: str = "") -> str:
+    """An engine and its version, from what a rendering recorded about it; the name only where it isn't `label`."""
+    if not isinstance(info, dict):
+        return ""
+    name = str(info.get("engine", ""))
+    if info.get("arkweb"):
+        version = f"ArkWeb {info['arkweb']}" + (f", Chromium {info['chromium']}" if info.get("chromium") else "")
+    elif match := SERVO.search(str(info.get("user_agent", ""))):
+        version = f"Servo {match.group(1)}"
+    else:
+        version = str(info.get("user_agent", ""))
+    if name == label:
+        return version or name
+    return f"{name} ({version})" if version else name
+
+
+def _origin(expected: object) -> tuple[object, str]:
+    """The engine of the captures a comparison compared with, and when they were stored or that they were rendered in
+    the run."""
+    if not isinstance(expected, dict):
+        return None, ""
+    if not isinstance(expected.get("engine"), dict):
+        return expected, ""  # older diff.json: the baseline's engine only
+    when = "rendered in this run" if expected.get("from") == "rendered in this run" else ""
+    if expected.get("stored"):
+        when = f"stored {str(expected['stored'])[:10]}" + (f" ({expected['reason']})" if expected.get("reason") else "")
+    return expected["engine"], when
+
+
+def _sides(report: dict) -> str:
+    """What a comparison compared: both engines with their versions, and when the expected captures were stored."""
+    labels = report.get("labels", ["expected", "actual"])
+    engine, when = _origin(report.get("expected"))
+    expected = ", ".join(part for part in (_who(engine, labels[0]), when) if part)
+    actual = _who(report.get("actual"), labels[1])
+    if not expected and not actual:
+        return ""
+    return f"{escape(labels[0])}: {escape(expected or '?')} · {escape(labels[1])} now: {escape(actual or '?')}"
+
+
+def _overview(comparisons: dict[str, list[dict]]) -> str:
+    """What the run compared, per kind of comparison, and what a difference means for each."""
+    items = []
+    for test, reports in comparisons.items():
+        title, css, meaning = KINDS[test]
+        labelled = [report.get("labels", ["expected", "actual"]) for report in reports]
+        if test == "test_matches_baseline":
+            engines = ", ".join(sorted({labels[1] for labels in labelled}))
+            dates = sorted(
+                {
+                    str(expected["stored"])[:10]
+                    for report in reports
+                    if isinstance(expected := report.get("expected"), dict) and expected.get("stored")
+                }
+            )
+            what = f"{engines or 'The engine'} against its baselines" + (
+                f", stored {', '.join(dates)}" if dates else ""
+            )
+        else:
+            pairs = sorted(
+                {
+                    f"{labels[1]} against {labels[0]}"
+                    + (f" ({who})" if (who := _who(_origin(report.get("expected"))[0], labels[0])) else "")
+                    for labels, report in zip(labelled, reports, strict=True)
+                }
+            )
+            what = "; ".join(pairs) or "The engine against another engine"
+        items.append(f'<li><span class="kind {css}">{title}</span> {escape(what)}. {meaning}</li>')
+    return f'<ul class="overview">{"".join(items)}</ul>' if items else ""
 
 
 def _shot(images: list[tuple[str, str]], width: float, boxes: str, caption: str) -> str:
@@ -202,15 +295,20 @@ def _capture(prefix: str, folder: Path, name: str, entry: dict, labels: list[str
     )
 
 
-def _comparison(prefix: str, kind: str, folder: Path | None, result: Result | None) -> str:
+def _comparison(prefix: str, test: str, folder: Path | None, result: Result | None) -> str:
+    title, css, _ = KINDS[test]
+    badge = f'<span class="kind {css}">{title}</span>'
     report = _load(folder / "diff.json") if folder else {}
-    head = f'<h3 id="{prefix}">{kind}: {_status(result)}</h3>'
+    head = f'<h3 id="{prefix}">{badge} {_status(result)}</h3>'
     if result is not None and result.message and (folder is None or result.status not in ("PASS", "FAIL")):
         head += f"<pre>{escape(result.message)}</pre>"
     if folder is None or not report:
         return head
     labels = report.get("labels", ["expected", "actual"])
-    head = f'<h3 id="{prefix}">{kind}: {escape(labels[1])} against {escape(labels[0])} {_status(result)}</h3>'
+    against = "its baseline" if test == "test_matches_baseline" else labels[0]
+    head = f'<h3 id="{prefix}">{badge} {escape(labels[1])} against {escape(against)} {_status(result)}</h3>'
+    if sides := _sides(report):
+        head += f"<p class=muted>{sides}</p>"
     triage = _load(folder / TRIAGE)
     if triage:
         agent, verdict, summary = (escape(str(triage.get(key, ""))) for key in ("agent", "verdict", "summary"))
@@ -248,19 +346,25 @@ def _rendering(folder: Path, data: dict) -> str:
     if info.get("seconds") is not None:
         facts.append(f"{info['seconds']} s")
     lines = [", ".join(facts)]
-    if info.get("external"):
-        lines.append(f"Other origins: {escape(', '.join(info['external']))}")
     for problem in data.get("problems", []):
         lines.append(f"<span class=FAIL>{escape(problem)}</span>")
     if data.get("error"):
         lines.append(f"<span class=FAIL>{escape(data['error'])}</span>")
+    external = info.get("external") or []
+    origins = (
+        f"<details><summary>{len(external)} resource(s) from other origins</summary><ul>"
+        + "".join(f"<li><code>{escape(str(url))}</code></li>" for url in external)
+        + "</ul></details>"
+        if external
+        else ""
+    )
     failure = folder / "failure.png"
     shot = (
         f'<img src="{escape(folder.name)}/failure.png" alt="failure" style="max-width: 360px">'
         if failure.is_file()
         else ""
     )
-    return "<p>" + "<br>".join(lines) + "</p>" + shot
+    return "<p>" + "<br>".join(lines) + "</p>" + origins + shot
 
 
 def write_report(artifacts: Path, results_json: Path | None = None) -> Path | None:
@@ -292,8 +396,17 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
         + "</tr>"
         for scenario in scenarios
     )
-    head = "".join(f"<th>{TESTS[kind]}</th>" for kind in kinds)
+    head = "".join(f"<th>{KINDS[kind][0].lower() if kind in KINDS else TESTS[kind]}</th>" for kind in kinds)
     summary = f'<div class="wide"><table><tr><th>Scenario</th>{head}</tr>{rows}</table></div>'
+    comparisons = {
+        kind: [
+            diff
+            for (_, test), folder in sorted(tests.items())
+            if test == kind and (diff := _load(folder / "diff.json"))
+        ]
+        for kind in kinds
+        if kind in KINDS
+    }
     sections = []
     for scenario in scenarios:
         parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)}</h2>']
@@ -307,7 +420,7 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
             folder = tests.get((scenario, kind))
             if folder is not None or (scenario, kind) in results:
                 prefix = f"{scenario}-{TESTS[kind]}"
-                parts.append(_comparison(prefix, TESTS[kind], folder, results.get((scenario, kind))))
+                parts.append(_comparison(prefix, kind, folder, results.get((scenario, kind))))
         sections.append("<section>" + "".join(parts) + "</section>")
     environment = report.environment if report else {}
     device = ", ".join(f"{key} {value}" for key, value in environment.items() if isinstance(value, str | int | float))
@@ -318,6 +431,7 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
         f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
         f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
         f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
+        f"{_overview(comparisons)}"
         '<input type="checkbox" id="boxes" checked> <label for="boxes">Show region boxes</label>'
         f"<main>{summary}{''.join(sections)}</main></body></html>\n"
     )
