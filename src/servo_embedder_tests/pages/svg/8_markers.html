@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Engine Test: 8_markers.html</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            border-bottom: 2px solid #d2d2d7;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .test-card {
+            background: #ffffff;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .test-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            width: 100%;
+            text-align: left;
+            color: #86868b;
+        }
+        .test-card p {
+            margin: 8px 0 0 0;
+            font-size: 12px;
+            color: #515154;
+            width: 100%;
+            line-height: 1.4;
+        }
+        svg {
+            background-color: #fafafa;
+            border: 1px dashed #bcbcf2;
+            width: 200px;
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>SVG Engine Test Suite: Vertex Markers & Orientations</h1>
+    
+    <div class="grid">
+
+        <!-- 1. BASIC VERTEX MARKERS -->
+        <div class="test-card">
+            <h3>Test 8.1: Start, Mid, and End Vertex Mapping</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6">
+                        <circle cx="5" cy="5" r="5" fill="#ff3b30"/>
+                    </marker>
+                    <marker id="square" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6">
+                        <rect width="10" height="10" fill="#007aff"/>
+                    </marker>
+                    <marker id="arrow" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#34c759"/>
+                    </marker>
+                </defs>
+                <path d="M 10 50 L 50 50 L 90 50" fill="none" stroke="#1d1d1f" stroke-width="2" 
+                      marker-start="url(#dot)" marker-mid="url(#square)" marker-end="url(#arrow)"/>
+            </svg>
+            <p><strong>Expect:</strong> A straight horizontal line. The start point has a red dot, the center vertex has a blue square, and the end point has a green arrow pointing right.</p>
+        </div>
+
+        <!-- 2. AUTO-ROTATION MATH -->
+        <div class="test-card">
+            <h3>Test 8.2: Directional Auto-Rotation</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="pointy-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+                        <path d="M 0 1 L 10 5 L 0 9 Z" fill="#af52de"/>
+                    </marker>
+                </defs>
+                <!-- Complex path moving up, right, then down diagonally -->
+                <path d="M 20 80 L 20 20 L 80 20 L 50 70" fill="none" stroke="#1d1d1f" stroke-width="2" 
+                      marker-end="url(#pointy-arrow)"/>
+            </svg>
+            <p><strong>Expect:</strong> A path with a purple arrow at its final terminal vertex. The arrow head must rotate dynamically to align perfectly with the incoming diagonal path tangent angle.</p>
+        </div>
+
+        <!-- 3. AUTO-START-REVERSE SPECIFICATION -->
+        <div class="test-card">
+            <h3>Test 8.3: orient="auto-start-reverse"</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="rev-arrow" viewBox="0 0 10 10" refX="0" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#ff9500"/>
+                    </marker>
+                </defs>
+                <path d="M 20 50 L 80 50" fill="none" stroke="#1d1d1f" stroke-width="3"
+                      marker-start="url(#rev-arrow)" marker-end="url(#rev-arrow)"/>
+            </svg>
+            <p><strong>Expect:</strong> A line with orange arrows at both ends pointing outwards away from the shaft. The start marker flips 180 degrees automatically relative to path direction.</p>
+        </div>
+
+        <!-- 4. FIXED DEGREES ORIENTATION -->
+        <div class="test-card">
+            <h3>Test 8.4: Fixed Rotation Angle Override</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="fixed-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" orient="45deg">
+                        <path d="M 0 0 L 10 5 L 0 10 Z" fill="#5856d6"/>
+                    </marker>
+                </defs>
+                <path d="M 10 50 L 90 50" fill="none" stroke="#1d1d1f" stroke-width="2" marker-mid="url(#fixed-arrow)"/>
+                <!-- Invisible middle vertex injection point to force marker placement -->
+                <path d="M 10 50 L 50 50 L 90 50" fill="none" stroke="none" marker-mid="url(#fixed-arrow)"/>
+            </svg>
+            <p><strong>Expect:</strong> A purple arrow positioned in the center. Despite sitting on a horizontal path, the arrow must be locked at a sharp 45-degree downward angle.</p>
+        </div>
+
+        <!-- 5. STROKE WIDTH SIZING METRICS -->
+        <div class="test-card">
+            <h3>Test 8.5: markerUnits="strokeWidth" (Default)</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="scaled-box" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3" markerHeight="3">
+                        <rect width="10" height="10" fill="#34c759"/>
+                    </marker>
+                </defs>
+                <!-- Thicker stroke must inflate the final rendered size of the marker element -->
+                <path d="M 10 30 L 90 30" fill="none" stroke="#1d1d1f" stroke-width="2" marker-end="url(#scaled-box)"/>
+                <path d="M 10 70 L 90 70" fill="none" stroke="#1d1d1f" stroke-width="6" marker-end="url(#scaled-box)"/>
+            </svg>
+            <p><strong>Expect:</strong> Two lines with green end squares. The marker square on the bottom line must be three times larger than the top marker because it inherits the host line thickness.</p>
+        </div>
+
+        <!-- 6. USER SPACE SIZING METRICS -->
+        <div class="test-card">
+            <h3>Test 8.6: markerUnits="userSpaceOnUse"</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="fixed-box" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="15" markerHeight="15" markerUnits="userSpaceOnUse">
+                        <rect width="10" height="10" fill="#ffcc00"/>
+                    </marker>
+                </defs>
+                <!-- Marker sizes must remain entirely uniform regardless of line widths -->
+                <path d="M 10 30 L 90 30" fill="none" stroke="#1d1d1f" stroke-width="1" marker-end="url(#fixed-box)"/>
+                <path d="M 10 70 L 90 70" fill="none" stroke="#1d1d1f" stroke-width="8" marker-end="url(#fixed-box)"/>
+            </svg>
+            <p><strong>Expect:</strong> Yellow square markers on both paths must be exactly identical in size. Tests if the engine decouples marker scale bounds from line thickness parameters.</p>
+        </div>
+
+        <!-- 7. POLYGON / POLYLINE MARKERS -->
+        <div class="test-card">
+            <h3>Test 8.7: Polyline/Polygon Node Mapping</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="blue-dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5">
+                        <circle cx="5" cy="5" r="4" fill="#007aff"/>
+                    </marker>
+                </defs>
+                <polyline points="15,20 40,40 20,80 85,50" fill="none" stroke="#1d1d1f" stroke-width="2" marker-mid="url(#blue-dot)"/>
+            </svg>
+            <p><strong>Expect:</strong> A zigzag profile line. Blue marker circles must be positioned on every single internal node vertex bend point (excludes the absolute start and end tips).</p>
+        </div>
+
+        <!-- 8. ZERO-LENGTH PATH SEGMENT CRASH TEST -->
+        <div class="test-card">
+            <h3>Test 8.8: Zero-Length Segments (Degenerate Paths)</h3>
+            <svg viewBox="0 0 100 100">
+                <defs>
+                    <marker id="crash-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                        <circle cx="5" cy="5" r="4" fill="#ff3b30"/>
+                    </marker>
+                </defs>
+                <!-- Path moves from 50,50 to 50,50. Svg spec dictates orientation tangent calculation falls back to 0 degrees -->
+                <path d="M 50 50 L 50 50" fill="none" stroke="#1d1d1f" stroke-width="4" marker-start="url(#crash-arrow)" marker-end="url(#crash-arrow)"/>
+            </svg>
+            <p><strong>Expect:</strong> A single red dot placed at (50,50). Verifies if your math engine safely catches internal divide-by-zero errors when vector slopes cannot be computed.</p>
+        </div>
+
+    </div>
+
+</body>
+</html>

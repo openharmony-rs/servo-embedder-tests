@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SVG Engine Test: 1_basic_shapes.html</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f5f5f7;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            border-bottom: 2px solid #d2d2d7;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .test-card {
+            background: #ffffff;
+            border: 1px solid #d2d2d7;
+            border-radius: 8px;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .test-card h3 {
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            width: 100%;
+            text-align: left;
+            color: #86868b;
+        }
+        .test-card p {
+            margin: 8px 0 0 0;
+            font-size: 12px;
+            color: #515154;
+            width: 100%;
+            line-height: 1.4;
+        }
+        svg {
+            background-color: #fafafa;
+            border: 1px dashed #bcbcf2;
+            width: 200px;
+            height: 200px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>SVG Engine Test Suite: Basic Shapes Primitives</h1>
+    
+    <div class="grid">
+
+        <!-- RECTANGLE TESTS -->
+        <div class="test-card">
+            <h3>Test 1.1: Standard Rectangle</h3>
+            <svg viewBox="0 0 100 100">
+                <rect x="10" y="10" width="80" height="60" fill="#34c759" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> Sharp green rectangle from (10,10) to (90,70) with a black outline.</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.2: Rounded Rectangle (rx, ry)</h3>
+            <svg viewBox="0 0 100 100">
+                <rect x="10" y="10" width="80" height="80" rx="15" ry="15" fill="#007aff" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> Blue square with perfectly uniform 15px rounded corners.</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.3: Rect Clamped Corners (rx > width/2)</h3>
+            <svg viewBox="0 0 100 100">
+                <rect x="10" y="10" width="80" height="80" rx="60" fill="#5856d6"/>
+            </svg>
+            <p><strong>Expect:</strong> A perfect circle. Spec dictates rx/ry must scale down proportionally if they overlap.</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.4: Rect Invalid Dimensions (Zero/Negative)</h3>
+            <svg viewBox="0 0 100 100">
+                <!-- Should not render -->
+                <rect x="10" y="10" width="0" height="80" fill="#ff3b30"/>
+                <rect x="10" y="10" width="80" height="-20" fill="#ff3b30"/>
+                <!-- Validation anchor -->
+                <line x1="10" y1="50" x2="90" y2="50" stroke="#ff9500" stroke-width="4"/>
+            </svg>
+            <p><strong>Expect:</strong> Blank canvas except for the orange center line. Zero or negative width/height disables rendering.</p>
+        </div>
+
+        <!-- CIRCLE TESTS -->
+        <div class="test-card">
+            <h3>Test 1.5: Standard Circle</h3>
+            <svg viewBox="0 0 100 100">
+                <circle cx="50" cy="50" r="40" fill="#ffcc00" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> Yellow circle centered precisely at (50,50) extending to borders.</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.6: Circle Implicit Center</h3>
+            <svg viewBox="0 0 100 100">
+                <circle r="40" fill="#ff9500"/>
+            </svg>
+            <p><strong>Expect:</strong> Top-left quadrant of an orange circle centered at (0,0).</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.7: Circle Invalid Radius</h3>
+            <svg viewBox="0 0 100 100">
+                <!-- Should not render -->
+                <circle cx="50" cy="50" r="0" fill="#ff3b30"/>
+                <circle cx="50" cy="50" r="-10" fill="#ff3b30"/>
+                <!-- Validation anchor -->
+                <line x1="50" y1="10" x2="50" y2="90" stroke="#34c759" stroke-width="4"/>
+            </svg>
+            <p><strong>Expect:</strong> Only the vertical green line. r <= 0 disables rendering entirely.</p>
+        </div>
+
+        <!-- ELLIPSE TESTS -->
+        <div class="test-card">
+            <h3>Test 1.8: Standard Ellipse</h3>
+            <svg viewBox="0 0 100 100">
+                <ellipse cx="50" cy="50" rx="40" ry="20" fill="#af52de" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> Purple oval wider horizontally than vertically, centered at (50,50).</p>
+        </div>
+
+        <!-- LINE TESTS -->
+        <div class="test-card">
+            <h3>Test 1.9: Standard & Thick Lines</h3>
+            <svg viewBox="0 0 100 100">
+                <line x1="10" y1="10" x2="90" y2="90" stroke="#1d1d1f" stroke-width="2"/>
+                <line x1="90" y1="10" x2="10" y2="90" stroke="#ff3b30" stroke-width="8"/>
+            </svg>
+            <p><strong>Expect:</strong> Two lines crossing. Red line must be noticeably thicker and sit on top.</p>
+        </div>
+
+        <!-- POLYLINE TESTS -->
+        <div class="test-card">
+            <h3>Test 1.10: Open Polyline</h3>
+            <svg viewBox="0 0 100 100">
+                <polyline points="10,90 30,20 60,70 90,10" fill="none" stroke="#007aff" stroke-width="3"/>
+            </svg>
+            <p><strong>Expect:</strong> Continuous blue zigzag line. The shape must stay completely open (no fill connecting start and end).</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.11: Polyline Implicit Fill</h3>
+            <svg viewBox="0 0 100 100">
+                <polyline points="10,90 30,20 60,70 90,10" fill="#34c759" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> Black zigzag line with the enclosed region automatically filled in green, but no stroke closing line.</p>
+        </div>
+
+        <!-- POLYGON TESTS -->
+        <div class="test-card">
+            <h3>Test 1.12: Closed Polygon</h3>
+            <svg viewBox="0 0 100 100">
+                <polygon points="50,10 90,80 10,80" fill="#ff5b57" stroke="#1d1d1f" stroke-width="3"/>
+            </svg>
+            <p><strong>Expect:</strong> Red triangle. The stroke must cleanly close the path at the bottom vertices.</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.13: Self-Intersecting Polygon</h3>
+            <svg viewBox="0 0 100 100">
+                <polygon points="50,5 90,90 10,35 90,35 10,90" fill="#ffcc00" fill-rule="nonzero" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> A solid 5-point star filled completely with yellow because of the `nonzero` rule.</p>
+        </div>
+
+        <div class="test-card">
+            <h3>Test 1.14: Polygon EvenOdd Fill Rule</h3>
+            <svg viewBox="0 0 100 100">
+                <polygon points="50,5 90,90 10,35 90,35 10,90" fill="#ffcc00" fill-rule="evenodd" stroke="#1d1d1f" stroke-width="2"/>
+            </svg>
+            <p><strong>Expect:</strong> A 5-point star where the inner central pentagon remains transparent/hollow.</p>
+        </div>
+
+        <!-- MALFORMED SYNTAX TESTS -->
+        <div class="test-card">
+            <h3>Test 1.15: Malformed Coordinate Whitespace</h3>
+            <svg viewBox="0 0 100 100">
+                <!-- Tests space/comma separators, missing trailing coordinates, and text junk inside points -->
+                <polygon points="10,,10   50 10,  90,90 abc,123 10,90" fill="#5856d6"/>
+            </svg>
+            <p><strong>Expect:</strong> Engine should parse valid pairs safely up to the junk data, fallback safely, or drop the shape depending on strictness. (Standard browsers drop or parse a triangle).</p>
+        </div>
+
+    </div>
+
+</body>
+</html>

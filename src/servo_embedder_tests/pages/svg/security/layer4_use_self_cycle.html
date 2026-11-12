@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Layer 4b — use self-cycle &amp; deep chain</title></head><body>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+  <defs>
+    <!-- direct self-cycle (cycle detection) -->
+    <g id="self"><use href="#self"/></g>
+    <!-- 80-level non-cyclic chain (MAX_USE_DEPTH = 64) -->
+    <g id="d0"><use href="#d1"/></g>
+    <g id="d1"><use href="#d2"/></g>
+    <g id="d2"><use href="#d3"/></g>
+    <g id="d3"><use href="#d4"/></g>
+    <g id="d4"><use href="#d5"/></g>
+    <g id="d5"><use href="#d6"/></g>
+    <g id="d6"><use href="#d7"/></g>
+    <g id="d7"><use href="#d8"/></g>
+    <g id="d8"><use href="#d9"/></g>
+    <g id="d9"><use href="#d10"/></g>
+    <g id="d10"><use href="#d11"/></g>
+    <g id="d11"><use href="#d12"/></g>
+    <g id="d12"><use href="#d13"/></g>
+    <g id="d13"><use href="#d14"/></g>
+    <g id="d14"><use href="#d15"/></g>
+    <g id="d15"><use href="#d16"/></g>
+    <g id="d16"><use href="#d17"/></g>
+    <g id="d17"><use href="#d18"/></g>
+    <g id="d18"><use href="#d19"/></g>
+    <g id="d19"><use href="#d20"/></g>
+    <g id="d20"><use href="#d21"/></g>
+    <g id="d21"><use href="#d22"/></g>
+    <g id="d22"><use href="#d23"/></g>
+    <g id="d23"><use href="#d24"/></g>
+    <g id="d24"><use href="#d25"/></g>
+    <g id="d25"><use href="#d26"/></g>
+    <g id="d26"><use href="#d27"/></g>
+    <g id="d27"><use href="#d28"/></g>
+    <g id="d28"><use href="#d29"/></g>
+    <g id="d29"><use href="#d30"/></g>
+    <g id="d30"><use href="#d31"/></g>
+    <g id="d31"><use href="#d32"/></g>
+    <g id="d32"><use href="#d33"/></g>
+    <g id="d33"><use href="#d34"/></g>
+    <g id="d34"><use href="#d35"/></g>
+    <g id="d35"><use href="#d36"/></g>
+    <g id="d36"><use href="#d37"/></g>
+    <g id="d37"><use href="#d38"/></g>
+    <g id="d38"><use href="#d39"/></g>
+    <g id="d39"><use href="#d40"/></g>
+    <g id="d40"><use href="#d41"/></g>
+    <g id="d41"><use href="#d42"/></g>
+    <g id="d42"><use href="#d43"/></g>
+    <g id="d43"><use href="#d44"/></g>
+    <g id="d44"><use href="#d45"/></g>
+    <g id="d45"><use href="#d46"/></g>
+    <g id="d46"><use href="#d47"/></g>
+    <g id="d47"><use href="#d48"/></g>
+    <g id="d48"><use href="#d49"/></g>
+    <g id="d49"><use href="#d50"/></g>
+    <g id="d50"><use href="#d51"/></g>
+    <g id="d51"><use href="#d52"/></g>
+    <g id="d52"><use href="#d53"/></g>
+    <g id="d53"><use href="#d54"/></g>
+    <g id="d54"><use href="#d55"/></g>
+    <g id="d55"><use href="#d56"/></g>
+    <g id="d56"><use href="#d57"/></g>
+    <g id="d57"><use href="#d58"/></g>
+    <g id="d58"><use href="#d59"/></g>
+    <g id="d59"><use href="#d60"/></g>
+    <g id="d60"><use href="#d61"/></g>
+    <g id="d61"><use href="#d62"/></g>
+    <g id="d62"><use href="#d63"/></g>
+    <g id="d63"><use href="#d64"/></g>
+    <g id="d64"><use href="#d65"/></g>
+    <g id="d65"><use href="#d66"/></g>
+    <g id="d66"><use href="#d67"/></g>
+    <g id="d67"><use href="#d68"/></g>
+    <g id="d68"><use href="#d69"/></g>
+    <g id="d69"><use href="#d70"/></g>
+    <g id="d70"><use href="#d71"/></g>
+    <g id="d71"><use href="#d72"/></g>
+    <g id="d72"><use href="#d73"/></g>
+    <g id="d73"><use href="#d74"/></g>
+    <g id="d74"><use href="#d75"/></g>
+    <g id="d75"><use href="#d76"/></g>
+    <g id="d76"><use href="#d77"/></g>
+    <g id="d77"><use href="#d78"/></g>
+    <g id="d78"><use href="#d79"/></g>
+    <g id="d79"><rect width="1" height="1" fill="red"/></g>
+  </defs>
+  <use href="#self"/>
+  <use href="#d0"/>
+</svg>
+</body></html>

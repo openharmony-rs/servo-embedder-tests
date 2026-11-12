@@ -294,4 +294,6 @@ just run --hdc-target <serial>
 ## License
 
 Apache-2.0 OR MIT. Some scenarios and the mitmproxy options are ported from Servo's `etc/ci/scenario` and
-keep their notices.
+keep their notices. The SVG test pages in `pages/svg/` come from
+[svg-tests-servo](https://github.com/mu-mostafa98/svg-tests-servo) by Mohamed Mostafa and keep its MIT license, in
+`pages/svg/LICENSE`; `pages/svg/README.md` says which version they are.

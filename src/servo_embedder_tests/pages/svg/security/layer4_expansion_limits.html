@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Layer 4 — Expansion &amp; geometry limits (&lt;use&gt; mutual recursion)</title>
+</head>
+<body>
+
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200">
+  <defs>
+    <!-- Mutual recursion: resolving #l1 -> #l2 -> #l1 -> ... forever. -->
+    <g id="l1"><use href="#l2"/></g>
+    <g id="l2"><use href="#l1"/></g>
+  </defs>
+
+  <!-- Resolution is bounded by MAX_USE_DEPTH (64) + MAX_TOTAL_NODES (1e6) in
+       layout/svg/builder/resolve.rs, so this terminates instead of hanging. -->
+  <use href="#l1" x="0" y="0"/>
+</svg>
+
+<!--
+  Expected: no hang, no crash. The <use> graph is bounded by the fan-out/depth
+  budget in components/layout/svg/builder/resolve.rs. Run with:
+    ./target/debug/servoshell.exe -z --window-size=200x200 -o out.png \
+      file:///D:/Projects/svg-tests/security/layer4_expansion_limits.html \
+      --pref layout_servo_svg_enabled
+-->
+</body>
+</html>
