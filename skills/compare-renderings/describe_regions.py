@@ -95,7 +95,7 @@ def explained(region: dict) -> bool:
 def regions(test: Path, limit: int, everything: bool = False) -> tuple[list[dict], list[dict], list[str]]:
     """The regions with crops in `test`'s diff.json, largest first, that the measurements don't explain (all of them
     with `everything`), those they do, and the comparison's labels."""
-    report = json.loads((test / "diff.json").read_text())
+    report = json.loads((test / "diff.json").read_text(encoding="utf-8"))
     found = []
     for name, capture in report["captures"].items():
         for region in capture.get("regions", []):
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
     digest = hashlib.sha256(json.dumps([PROMPT_VERSION, base_url, body], sort_keys=True).encode()).hexdigest()
     cache = options.test / "vision.json"
     if cache.is_file():
-        cached = json.loads(cache.read_text())
+        cached = json.loads(cache.read_text(encoding="utf-8"))
         if cached.get("request") == digest:
             print(json.dumps(cached["answer"], ensure_ascii=False, indent=2))
             return 0
@@ -219,7 +219,7 @@ def main(argv: list[str] | None = None) -> int:
                 item.update(capture=region["capture"], box=region["box"], crop=region["crop"])
         answer["explained"] = explained_by_measurements
     record = {"request": digest, "model": model, "usage": reply.get("usage"), "answer": answer}
-    cache.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
+    cache.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(answer, ensure_ascii=False, indent=2))
     return 0
 

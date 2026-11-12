@@ -287,7 +287,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
     run = _run(config)
     path = config.option.results_json or run.artifacts / "results.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(run.report.to_json())
+    path.write_text(run.report.to_json(), encoding="utf-8")
     from .report import write_report
 
     run.page_report = write_report(run.artifacts, path)
@@ -565,15 +565,19 @@ class ServoSession:
         elif self._driver is not None:
             steps.append(("screenshot", lambda: self.driver.save_screenshot(str(directory / "screen.png"))))
         if self._driver is not None and _is_running(self.app):
-            steps.append(("page source", lambda: (directory / "page.html").write_text(self.driver.page_source)))
+            steps.append(
+                ("page source", lambda: (directory / "page.html").write_text(self.driver.page_source, encoding="utf-8"))
+            )
         if self.hilog is not None:
             hilog = self.hilog
-            steps.append(("hilog", lambda: (directory / "hilog.txt").write_text(hilog.text(self.hilog_mark))))
+            steps.append(
+                ("hilog", lambda: (directory / "hilog.txt").write_text(hilog.text(self.hilog_mark), encoding="utf-8"))
+            )
         for name, step in steps:
             try:
                 step()  # type: ignore[operator]
             except Exception as error:
-                (directory / "errors.txt").open("a").write(f"{name}: {error}\n")
+                (directory / "errors.txt").open("a", encoding="utf-8").write(f"{name}: {error}\n")
         return directory
 
 

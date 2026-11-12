@@ -143,7 +143,7 @@ class RunReport:
 
     @classmethod
     def from_file(cls, path: Path) -> RunReport:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
         report = cls(data["device_class"], environment=data.get("environment", {}))
         for key, raw in data["results"].items():
             report.results[key] = Result(**raw)
