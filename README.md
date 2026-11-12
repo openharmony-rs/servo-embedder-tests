@@ -113,10 +113,12 @@ A folder with a subfolder per page, each with its `index.html` and resources, be
 `--page-scenarios <folder>`. Without test names, `run` then runs only those:
 
 ```sh
-# The first run stores what the engine renders as the baselines.
-uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --update-baselines
+# The first run stores what the engine renders as the baselines; --engine-version names the build.
+uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --update-baselines \
+    --engine-version v0.8.0
 # Later runs, e.g. after a Servo update, compare with them.
-uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --expectations genui.toml
+uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --expectations genui.toml \
+    --engine-version main@3f2a1b
 # Also compare with ArkWeb on the same device, through chromedriver over ArkWeb's DevTools socket.
 uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines --reference-engine arkweb \
     --arkweb-viewer <bundle> --chromedriver <chromedriver matching ArkWeb's Chromium>
@@ -129,6 +131,11 @@ Each scenario has three tests:
 - `test_renders`: the page loads, settles, every `<img>` loaded a picture, and the page passes its own checks;
 - `test_matches_baseline`: each capture matches the engine's baseline;
 - `test_matches_reference`: each capture matches the reference engine's.
+
+The first is a regression check: it finds what changed since the baselines were stored, e.g. with an engine update.
+The second is an engine comparison: it finds the gaps between two engines. `--engine-version NAME` and
+`--reference-engine-version NAME` name the builds, e.g. a commit or a release. The name is kept with their captures
+and baselines, so that `diff.json` and the report say which builds were compared.
 
 The page is rendered once per engine for all three. Known differences between engines go into the expectations of
 `test_matches_reference`, so that they don't hide regressions. The captures of each engine are kept in

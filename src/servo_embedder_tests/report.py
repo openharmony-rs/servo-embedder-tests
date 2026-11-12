@@ -137,16 +137,18 @@ def _dom_change(change: dict) -> str:
 
 
 def _who(info: object, label: str = "") -> str:
-    """An engine and its version, from what a rendering recorded about it; the name only where it isn't `label`."""
+    """An engine and its version, from what a rendering recorded about it (the name --engine-version gave its build
+    first); the engine's name only where it isn't `label`."""
     if not isinstance(info, dict):
         return ""
     name = str(info.get("engine", ""))
     if info.get("arkweb"):
-        version = f"ArkWeb {info['arkweb']}" + (f", Chromium {info['chromium']}" if info.get("chromium") else "")
+        detected = f"ArkWeb {info['arkweb']}" + (f", Chromium {info['chromium']}" if info.get("chromium") else "")
     elif match := SERVO.search(str(info.get("user_agent", ""))):
-        version = f"Servo {match.group(1)}"
+        detected = f"Servo {match.group(1)}"
     else:
-        version = str(info.get("user_agent", ""))
+        detected = str(info.get("user_agent", ""))
+    version = " · ".join(part for part in (str(info.get("version") or ""), detected) if part)
     if name == label:
         return version or name
     return f"{name} ({version})" if version else name
@@ -183,7 +185,10 @@ def _overview(comparisons: dict[str, list[dict]]) -> str:
         title, css, meaning = KINDS[test]
         labelled = [report.get("labels", ["expected", "actual"]) for report in reports]
         if test == "test_matches_baseline":
-            engines = ", ".join(sorted({labels[1] for labels in labelled}))
+            now = sorted(
+                {_who(report.get("actual")) or labels[1] for labels, report in zip(labelled, reports, strict=True)}
+            )
+            then = sorted({who for report in reports if (who := _who(_origin(report.get("expected"))[0]))})
             dates = sorted(
                 {
                     str(expected["stored"])[:10]
@@ -191,9 +196,11 @@ def _overview(comparisons: dict[str, list[dict]]) -> str:
                     if isinstance(expected := report.get("expected"), dict) and expected.get("stored")
                 }
             )
-            what = f"{engines or 'The engine'} against its baselines" + (
-                f", stored {', '.join(dates)}" if dates else ""
-            )
+            what = f"{', '.join(now) or 'The engine'} against its baselines"
+            if then and then != now:
+                what += f" of {', '.join(then)}"
+            if dates:
+                what += f", stored {', '.join(dates)}"
         else:
             pairs = sorted(
                 {

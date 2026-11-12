@@ -16,7 +16,7 @@ import json
 import shutil
 import time
 import tomllib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -825,7 +825,9 @@ class PageRuns:
         directory: Callable[[str], Path],
         update_baselines: bool = False,
         update_references: bool = False,
+        versions: Mapping[str, str] | None = None,
     ) -> None:
+        """`versions` names the builds of engines, e.g. a commit, for whoever compares their renderings."""
         if engine not in engines:
             raise ScenarioError(f"no engine {engine!r}; known: {', '.join(sorted(engines))}")
         self.engines = engines
@@ -837,6 +839,7 @@ class PageRuns:
         self.directory = directory
         self.update_baselines = update_baselines
         self.update_references = update_references
+        self.versions = dict(versions or {})
         self._renderings: dict[tuple[str, str], Rendering] = {}
 
     def rendering(self, engine: str, scenario: Scenario) -> Rendering:
@@ -845,6 +848,12 @@ class PageRuns:
             rendering = self.renderer.render(
                 self.engines[engine], scenario, self.directory(f"{engine}/{scenario.name}")
             )
+            if version := self.versions.get(engine):
+                described = rendering.info.get("engine")
+                rendering.info["engine"] = {
+                    **(described if isinstance(described, dict) else {"engine": engine}),
+                    "version": version,
+                }
             rendering.write(self.device)
             self._renderings[key] = rendering
         return self._renderings[key]
