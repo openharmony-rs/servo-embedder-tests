@@ -180,6 +180,9 @@ def test_key(item: pytest.Item) -> str:
         except ValueError:
             relative = Path(path.name)
     name = item.nodeid.split("::", 1)[1] if "::" in item.nodeid else item.name
+    if "\\" in name:
+        # pytest writes non-ASCII characters of parameters as escapes (`具`): keys name scenarios as they are.
+        name = name.encode("ascii", "backslashreplace").decode("unicode_escape")
     return f"{relative.as_posix()}::{name}"
 
 
@@ -261,9 +264,11 @@ def pytest_collection_finish(session: pytest.Session) -> None:
 
 def artifacts_dir(run: ScenarioRun, key: str) -> Path:
     """The artifacts folder of the test `key`, created and marked for removal by the next run."""
-    directory = run.artifacts / re.sub(r"[^A-Za-z0-9._-]+", "_", key)
+    # Non-ASCII characters as escapes, so that keys that differ only in them get folders of their own.
+    ascii_key = key.encode("ascii", "backslashreplace").decode("ascii")
+    directory = run.artifacts / re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_key)
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+    (directory / TEST_ARTIFACTS_MARKER).write_text(key + "\n", encoding="utf-8")
     return directory
 
 
@@ -287,7 +292,7 @@ def pytest_sessionfinish(session: pytest.Session) -> None:
 
     run.page_report = write_report(run.artifacts, path)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
-        with open(summary, "a") as f:
+        with open(summary, "a", encoding="utf-8") as f:
             f.write(_markdown_summary(run.report))
     run.stack.close()
     if run._platform is not None:

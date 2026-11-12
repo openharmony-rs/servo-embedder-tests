@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import urllib.parse
 import urllib.request
 from types import SimpleNamespace
 from typing import cast
@@ -97,6 +98,17 @@ def test_the_error_script_is_injected_only_under_its_prefix(tmp_path):
         server.stop()
     assert menu.startswith("<!DOCTYPE html><html><head><script>(() => {")
     assert "__servoEmbedderTestsErrors" not in order
+
+
+def test_scripts_are_injected_into_pages_with_non_ascii_names(tmp_path):
+    root = _scenarios(tmp_path, 菜单="")
+    server = PageServer([root]).start()
+    try:
+        server.inject("/菜单/", ERRORS)
+        page = urllib.request.urlopen(server.url(urllib.parse.quote("菜单/index.html"))).read().decode()
+    finally:
+        server.stop()
+    assert "__servoEmbedderTestsErrors" in page
 
 
 def test_page_changes_come_before_the_pages_own_scripts(tmp_path):

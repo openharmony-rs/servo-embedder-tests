@@ -380,7 +380,7 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
     results_json = results_json or artifacts / "results.json"
     tests: dict[tuple[str, str], Path] = {}
     for marker in artifacts.glob(f"*/{TEST_ARTIFACTS_MARKER}"):
-        match = KEY.match(marker.read_text().strip())
+        match = KEY.match(marker.read_text(encoding="utf-8").strip())
         if match and match.group(1) in TESTS:
             tests[(match.group(2), match.group(1))] = marker.parent
     renderings: dict[str, list[tuple[Path, dict]]] = {}
@@ -443,5 +443,5 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
         f"<main>{summary}{''.join(sections)}</main></body></html>\n"
     )
     path = artifacts / REPORT
-    path.write_text(page)
+    path.write_text(page, encoding="utf-8")
     return path

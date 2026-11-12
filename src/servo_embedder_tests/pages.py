@@ -92,6 +92,7 @@ class _Server(http.server.ThreadingHTTPServer):
 
     def inject(self, path: str, body: bytes) -> bytes:
         """`body` with the snippets for `path` inserted at the start of its `<head>`."""
+        path = urllib.parse.unquote(path)
         snippets = b"".join(snippet for prefix, snippet in self.injections if path.startswith(prefix))
         if not snippets:
             return body

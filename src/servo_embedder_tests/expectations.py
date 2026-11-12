@@ -62,13 +62,13 @@ class Expectations:
     def load(cls, path: Path | None) -> Expectations:
         if path is None or not path.exists():
             return cls(path=path)
-        return cls(tomlkit.parse(path.read_text()), path)
+        return cls(tomlkit.parse(path.read_text(encoding="utf-8")), path)
 
     def save(self, path: Path | None = None) -> None:
         target = path or self.path
         if target is None:
             raise ValueError("no path to save expectations to")
-        target.write_text(tomlkit.dumps(self.document))
+        target.write_text(tomlkit.dumps(self.document), encoding="utf-8")
 
     def get(self, key: str, device_class: str) -> Expectation:
         table = self.document.get(key)
