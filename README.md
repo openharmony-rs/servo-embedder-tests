@@ -249,6 +249,16 @@ def pytest_servo_embedder_tests_engines(config, platform):
     return [MyAppArkWeb(platform, "com.example.myapp", config.option.chromedriver, config.option.artifacts / "cd.log")]
 ```
 
+The package brings SVG test pages, sets of cards with an SVG each (see `pages/svg/README.md`).
+`servo-embedder-tests svg-cards <folder>` writes a page scenario of each card into the folder: the card's SVG alone
+in the top left corner of a page, captured in one viewport. Write the folder again after an update of the package.
+
+```sh
+uvx servo-embedder-tests svg-cards svg-cards
+uvx servo-embedder-tests run --page-scenarios svg-cards --baselines svg-baselines --reference-engine arkweb \
+    --arkweb-viewer <bundle> --chromedriver <chromedriver matching ArkWeb's Chromium>
+```
+
 ## Writing scenarios
 
 Fixtures:
