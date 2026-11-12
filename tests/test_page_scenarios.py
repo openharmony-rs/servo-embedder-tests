@@ -1,4 +1,6 @@
 import json
+import shutil
+import subprocess
 import urllib.request
 from types import SimpleNamespace
 from typing import cast
@@ -10,6 +12,8 @@ from servo_embedder_tests import cli
 from servo_embedder_tests.engines import ArkWebEngine
 from servo_embedder_tests.page_scenarios import (
     ERRORS,
+    PAGE_CHANGES,
+    SEED_RANDOM,
     Capture,
     CaptureStore,
     Rendering,
@@ -38,7 +42,7 @@ def test_discover_merges_suite_defaults_and_scenario_overrides(tmp_path):
     root = _scenarios(
         tmp_path,
         "segments = 2\nmask = ['.clock']\n[page]\nfreeze = true\n",
-        menu="segments = 'all'\n[compare.baseline]\ntolerance = 4\n",
+        menu="segments = 'all'\n[page]\nseed_random = true\n[compare.baseline]\ntolerance = 4\n",
         order="",
     )
     (root / "notes").mkdir()
@@ -46,6 +50,7 @@ def test_discover_merges_suite_defaults_and_scenario_overrides(tmp_path):
     assert [menu.name, order.name] == ["menu", "order"]
     assert menu.steps[0].options == {"segments": "all"} and order.steps[0].options == {"segments": 2}
     assert menu.masks == [".clock"] and menu.page_option("freeze") and not menu.page_option("errors")
+    assert menu.page_option("seed_random") and not order.page_option("seed_random")
     assert menu.preset("baseline").tolerance == 4 and order.preset("baseline").tolerance == 12
     assert menu.url_path == "menu/index.html"
 
@@ -89,6 +94,32 @@ def test_the_error_script_is_injected_only_under_its_prefix(tmp_path):
         server.stop()
     assert menu.startswith("<!DOCTYPE html><html><head><script>(() => {")
     assert "__servoEmbedderTestsErrors" not in order
+
+
+def test_page_changes_come_before_the_pages_own_scripts(tmp_path):
+    root = tmp_path / "pages"
+    (root / "stars").mkdir(parents=True)
+    page = "<!DOCTYPE html><html><head><script>placeStars()</script></head><body></body></html>"
+    (root / "stars" / "index.html").write_text(page)
+    server = PageServer([root]).start()
+    try:
+        for _, snippet in PAGE_CHANGES:
+            server.inject("/stars/", snippet)
+        served = urllib.request.urlopen(server.url("stars/index.html")).read().decode()
+    finally:
+        server.stop()
+    positions = [served.index(snippet) for _, snippet in PAGE_CHANGES]
+    assert positions == sorted(positions) and positions[-1] < served.index("placeStars()")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_seeded_math_random_returns_its_fixed_numbers():
+    # These numbers are in the baselines of every page that uses seed_random: changing them invalidates those.
+    script = SEED_RANDOM.removeprefix("<script>").removesuffix("</script>")
+    check = "console.log(JSON.stringify([Math.random.servoEmbedderTests, ...Array.from({ length: 3 }, Math.random)]))"
+    marker, *numbers = json.loads(subprocess.check_output(["node", "-e", script + check], text=True))
+    assert marker is True
+    assert numbers == [0.27861995808780193, 0.8225720841437578, 0.2360540598165244]
 
 
 def _rendering(directory, engine="servoshell", heading="Menu", device="rk3568", photo=None):
