@@ -1,6 +1,6 @@
 [project]
 name = "servo-embedder-tests"
-version = "0.1.0"
+version = "0.1.2"
 description = "Embedder tests for Servo: what servoshell and its users do beyond WPT, on OpenHarmony, HarmonyOS and desktop"
 readme = "README.md"
 requires-python = ">=3.11"
