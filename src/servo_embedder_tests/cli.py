@@ -1,4 +1,5 @@
-"""`servo-embedder-tests run | list | doctor | update-expectations | accept | report | svg-cards | record-dump`."""
+"""The `servo-embedder-tests` commands: run, list, doctor, update-expectations, accept, skill, report, svg-cards and
+record-dump."""
 
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import pytest
 from . import __version__, svg_cards
 from .expectations import Expectations, RunReport, update
 from .page_scenarios import Capture, CaptureStore, Rendering
-from .plugin import BUNDLED_SCENARIOS
+from .plugin import BUNDLED_SCENARIOS, SKILL
 from .report import write_report
 
 
@@ -197,6 +198,23 @@ def _accept(argv: Sequence[str]) -> int:
     return 0
 
 
+def _skill(argv: Sequence[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="servo-embedder-tests skill",
+        description="Print the folder of the skill that tells an agent how to triage page scenario differences, or "
+        "copy the skill into an agent's skills folder.",
+    )
+    parser.add_argument("folder", type=Path, nargs="?", help="a skills folder to copy it into, e.g. ~/.claude/skills")
+    options = parser.parse_args(argv)
+    if options.folder is None:
+        print(SKILL)
+        return 0
+    dest = options.folder / SKILL.name
+    shutil.copytree(SKILL, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+    print(f"copied the {SKILL.name} skill to {dest}")
+    return 0
+
+
 def _report(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="servo-embedder-tests report",
@@ -237,6 +255,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "doctor": "check hdc, the device and the app",
         "update-expectations": "rewrite expectations from results.json files",
         "accept": "store page scenario captures of a run as baselines: accept ARTIFACTS --baselines DIR",
+        "skill": "print where the agent skill for triaging page scenarios is, or copy it: skill [FOLDER]",
         "report": "write a run's page scenario report (report.html) again: report ARTIFACTS",
         "svg-cards": "write the cards of the SVG test pages as page scenarios: svg-cards FOLDER",
         "record-dump": "record a mitmproxy dump of the network scenarios: record-dump PATH [run options]",
@@ -260,6 +279,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _update_expectations(rest)
     if command == "accept":
         return _accept(rest)
+    if command == "skill":
+        return _skill(rest)
     if command == "report":
         return _report(rest)
     if command == "svg-cards":

@@ -30,6 +30,10 @@ from .webdriver import connect
 from .webview_app import WebViewApp
 
 BUNDLED_SCENARIOS = Path(str(resources.files("servo_embedder_tests") / "scenarios"))
+# The agent skill for triaging page scenario differences, which the package ships.
+SKILL = Path(str(resources.files("servo_embedder_tests") / "skills" / "compare-renderings"))
+# The tests that compare page scenario captures, whose failures the skill helps triage.
+COMPARISON = re.compile(r"::test_matches_(baseline|reference)\[")
 EXPECTED_KEY = pytest.StashKey[list[str]]()
 # Marks a per-test artifacts folder, so that the next run can remove it.
 TEST_ARTIFACTS_MARKER = "test-key.txt"
@@ -314,7 +318,21 @@ def _markdown_summary(report: RunReport) -> str:
         lines += [f"| `{r.key}` | {'/'.join(r.expected)} | {r.status} |" for r in unexpected]
     else:
         lines.append("No unexpected results.")
+    if failed := _failed_comparisons(report):
+        lines.append(
+            f"\n{failed} page scenario comparison(s) failed; `servo-embedder-tests skill` prints where the skill for "
+            "triaging them is."
+        )
     return "\n".join(lines) + "\n\n"
+
+
+def _failed_comparisons(report: RunReport) -> int:
+    """The page scenario comparisons that failed unexpectedly, which the skill helps triage."""
+    return sum(
+        1
+        for result in report.results.values()
+        if result.status == "FAIL" and result.unexpected and COMPARISON.search(result.key)
+    )
 
 
 def _status(call: pytest.CallInfo[None], item: pytest.Item) -> str:
@@ -427,6 +445,8 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
         terminalreporter.line("no unexpected results")
     if run.page_report is not None:
         terminalreporter.line(f"page scenario report: {run.page_report}")
+    if failed := _failed_comparisons(run.report):
+        terminalreporter.line(f"{failed} page scenario comparison(s) failed; to triage them, read {SKILL / 'SKILL.md'}")
 
 
 @pytest.fixture(scope="session")

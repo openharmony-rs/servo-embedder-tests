@@ -124,7 +124,15 @@ uvx servo-embedder-tests run --page-scenarios genui --baselines genui-baselines 
     --arkweb-viewer <bundle> --chromedriver <chromedriver matching ArkWeb's Chromium>
 # Store a changed rendering, after review, as the new baseline (by default those whose baseline test failed).
 uvx servo-embedder-tests accept servo-embedder-tests-artifacts --baselines genui-baselines --reason "fixes bold"
+# Give an agent the skill for triaging failed comparisons; without a folder, print where it is.
+uvx servo-embedder-tests skill ~/.claude/skills
 ```
+
+The package comes with an agent skill, `compare-renderings`, that tells an agent how to triage failed comparisons:
+which differences are regressions, improvements or noise, and when to ask an image-capable model. A run with failed
+comparisons ends with where the skill is, so telling your agent to run the page scenarios and triage the failures
+is enough. It can also be read
+[on GitHub](https://github.com/openharmony-rs/servo-embedder-tests/tree/main/src/servo_embedder_tests/skills/compare-renderings).
 
 Each scenario has three tests:
 
@@ -173,8 +181,8 @@ Each comparison test writes `diff.json` with, for each capture:
 
 It also writes `<capture>-compare.png` (expected, actual and the differing pixels) and a crop of each region in
 `regions/`, expected above actual above the differing pixels. Those crops are what to send to an image-capable model
-for what the readings leave open: the skill in `skills/compare-renderings` describes how an agent triages a run, and
-its script asks any OpenAI-compatible endpoint about the regions.
+for what the readings leave open: the `compare-renderings` skill describes how an agent triages a run, and its
+script asks any OpenAI-compatible endpoint about the regions.
 
 For people, a run writes `report.html` to the artifacts folder: per scenario, each differing capture next to what it
 was compared with (hover the actual one to see the expected one in its place), the differing pixels, the regions

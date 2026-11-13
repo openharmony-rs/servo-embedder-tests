@@ -1,4 +1,6 @@
-from servo_embedder_tests import plugin
+from pathlib import Path
+
+from servo_embedder_tests import cli, plugin
 from servo_embedder_tests.cli import _pytest_args, _Selection
 
 pytest_plugins = ["pytester"]
@@ -44,6 +46,17 @@ def test_keys_with_non_ascii_names_select_their_tests(pytester):
     assert collected(pytester, "test_names.py::test_page[具身智能]") == ["test_names.py::test_page[具身智能]"]
     escaped = "test_names.py::test_page[\\u4eba\\u5f62\\u673a\\u5668\\u4eba]"
     assert collected(pytester, escaped) == ["test_names.py::test_page[人形机器人]"]
+
+
+def test_skill_prints_its_folder_and_copies_it(tmp_path, capsys):
+    assert cli.main(["skill"]) == 0
+    folder = Path(capsys.readouterr().out.strip())
+    assert folder == plugin.SKILL and (folder / "SKILL.md").is_file() and (folder / "describe_regions.py").is_file()
+    assert cli.main(["skill", str(tmp_path)]) == 0
+    assert cli.main(["skill", str(tmp_path)]) == 0  # again, e.g. after an update
+    copied = tmp_path / "compare-renderings"
+    assert sorted(path.name for path in copied.iterdir()) == ["SKILL.md", "describe_regions.py"]
+    assert (copied / "SKILL.md").read_text(encoding="utf-8") == (folder / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_extra_adds_to_bundled_suite(pytester):

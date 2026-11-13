@@ -2,11 +2,12 @@ import http.server
 import importlib.util
 import json
 import threading
-from pathlib import Path
 
 from PIL import Image
 
-SCRIPT = Path(__file__).parents[1] / "skills" / "compare-renderings" / "describe_regions.py"
+from servo_embedder_tests.plugin import SKILL
+
+SCRIPT = SKILL / "describe_regions.py"
 spec = importlib.util.spec_from_file_location("describe_regions", SCRIPT)
 describe_regions = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(describe_regions)
