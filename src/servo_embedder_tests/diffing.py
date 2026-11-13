@@ -32,6 +32,8 @@ MAX_OFFSET = 6
 BACKGROUND_RADIUS = 10
 # A pixel is ink when its luminance differs from the background by more than this (0-255).
 INK_CONTRAST = 48
+# Backgrounds closer than this in luminance (0-255) are the same; see `_inks`.
+BACKGROUND_TOLERANCE = 24
 # Strips, in CSS px, that are aligned one by one to tell letter spacing from other glyphs, and how far, in CSS px, each
 # looks around the previous one's offset.
 STRIP = 24
@@ -447,11 +449,41 @@ def _best_offset(a: Image.Image, b: Image.Image, search: int, steps: int = 4) ->
     return fine[1] / steps, fine[2] / steps, fine[0], unshifted
 
 
-def _ink(gray: Image.Image, radius: int) -> tuple[int, int]:
-    """How much the image departs from its background, the median over a window wider than strokes, which keeps
-    gradients but not text, and the horizontal extent of the ink in pixels, between the 2nd and the 98th percentile
-    of its columns, so that stray specks of a textured background don't count."""
-    contrast = ImageChops.difference(gray, gray.filter(ImageFilter.MedianFilter(2 * radius + 1)))
+def _inks(a: Image.Image, b: Image.Image, radius: int) -> tuple[tuple[int, int], tuple[int, int]]:
+    """`_ink` of the grayscale images `a` and `b` against their backgrounds, the median over a window wider than
+    strokes, which keeps gradients but not text. Content wider than half the window, such as a thick stroke, is its
+    image's median too: where only the other image's median is the background both mostly show, over an area at least
+    `radius` across, that one is the background of both, so that the content counts as ink. Narrower areas are edges
+    that moved, or the median's skew at the image's border. When their backgrounds differ, each keeps its own."""
+    size = 2 * radius + 1
+    median_a, median_b = a.filter(ImageFilter.MedianFilter(size)), b.filter(ImageFilter.MedianFilter(size))
+    histogram_a, histogram_b = a.histogram(), b.histogram()
+    mode_a = max(range(256), key=histogram_a.__getitem__)
+    mode_b = max(range(256), key=histogram_b.__getitem__)
+    if abs(mode_a - mode_b) > BACKGROUND_TOLERANCE:
+        return _ink(a, median_a), _ink(b, median_b)
+    shown = max(range(256), key=lambda value: histogram_a[value] + histogram_b[value])
+    page = Image.new("L", a.size, shown)
+
+    def near(median: Image.Image) -> Image.Image:
+        return ImageChops.difference(median, page).point(lambda value: 255 if value <= BACKGROUND_TOLERANCE else 0)
+
+    def background(own: Image.Image, other: Image.Image) -> Image.Image:
+        """`own`, except where only `other` is the page background, over an area at least `radius` across."""
+        only_other = ImageChops.subtract(near(other), near(own))
+        if only_other.getbbox() is None:
+            return own
+        width = radius | 1
+        wide = only_other.filter(ImageFilter.MinFilter(width)).filter(ImageFilter.MaxFilter(width))
+        return Image.composite(other, own, wide)
+
+    return _ink(a, background(median_a, median_b)), _ink(b, background(median_b, median_a))
+
+
+def _ink(gray: Image.Image, background: Image.Image) -> tuple[int, int]:
+    """How much the image departs from `background`, and the horizontal extent of the ink in pixels, between the 2nd
+    and the 98th percentile of its columns, so that stray specks of a textured background don't count."""
+    contrast = ImageChops.difference(gray, background)
     energy = sum(value * count for value, count in enumerate(contrast.histogram()))
     mask = contrast.point(lambda value: 255 if value > INK_CONTRAST else 0)
     columns = list(mask.resize((mask.width, 1), Image.Resampling.BOX).tobytes())
@@ -592,7 +624,7 @@ def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measure
     gray_a, gray_b = a.crop(box).convert("L"), b.crop(box).convert("L")
     dx, dy, residual, unshifted = _best_offset(gray_a, gray_b, round(MAX_OFFSET * scale))
     radius = round(BACKGROUND_RADIUS * scale)
-    (ink_a, extent_a), (ink_b, extent_b) = _ink(gray_a, radius), _ink(gray_b, radius)
+    (ink_a, extent_a), (ink_b, extent_b) = _inks(gray_a, gray_b, radius)
     return Measurement(
         (round(dx / scale, 2), round(dy / scale, 2)),
         round(residual, 1),

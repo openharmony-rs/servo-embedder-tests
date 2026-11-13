@@ -145,6 +145,27 @@ def test_measurements_see_bolder_strokes(tmp_path):
     assert "more ink: thicker or darker strokes" in measurement.reading()
 
 
+def _frame(path, stroke, background=(250, 250, 250)):
+    """A rectangle outlined in red, `stroke` CSS px wide."""
+    image = Image.new("RGB", (240, 120), background)
+    ImageDraw.Draw(image).rectangle((30, 30, 190, 90), outline=(255, 59, 48), width=stroke)
+    image.save(path)
+    return Shot(path, (240, 120))
+
+
+def test_strokes_wider_than_the_background_window_are_ink(tmp_path):
+    thin, thick = _frame(tmp_path / "thin.png", 2), _frame(tmp_path / "thick.png", 12)
+    thicker = _measured(thin, thick)
+    assert thicker.ink > 2 and "more ink" in thicker.reading()
+    thinner = _measured(thick, thin)
+    assert thinner.ink < 0.5 and "less ink" in thinner.reading()
+
+
+def test_a_changed_background_is_not_ink(tmp_path):
+    darker = _measured(_frame(tmp_path / "light.png", 2), _frame(tmp_path / "dark.png", 2, background=(40, 40, 60)))
+    assert darker.ink < 1.5
+
+
 def test_anti_aliasing_is_told_from_a_missing_texture(tmp_path):
     a = _page(tmp_path / "a.png")
     with Image.open(a.path) as image:
