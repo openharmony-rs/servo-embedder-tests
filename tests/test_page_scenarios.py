@@ -254,6 +254,7 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     assert 'src="baseline-menu/page-0-expected.png"' in page and 'class="box"' in page
     assert "an exclamation mark &lt;added&gt;" in page and "added text" in page and "new heading" in page
     assert '<span class="status FAIL unexpected">' in page
+    assert "1 comparison(s) failed. An agent can triage them with the skill" in page
     stored = store.index("menu")["stored"][:10]
     assert '<span class="kind regression">Regression check</span> servoshell against its baseline' in page
     now = "servoshell now: main@3f2a1b · Servo 0.8.0"

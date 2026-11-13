@@ -7,7 +7,7 @@ import pytest
 
 from servo_embedder_tests import plugin
 from servo_embedder_tests.platform import DesktopHost
-from servo_embedder_tests.plugin import TEST_ARTIFACTS_MARKER
+from servo_embedder_tests.plugin import SKILL, TEST_ARTIFACTS_MARKER
 
 pytest_plugins = ["pytester"]
 
@@ -92,6 +92,27 @@ def test_keys_name_non_ascii_parameters_as_they_are(pytester):
     markers = list(out.glob(f"*/{TEST_ARTIFACTS_MARKER}"))
     assert {marker.read_text(encoding="utf-8").strip() for marker in markers} == keys
     assert len(markers) == 2 and all(marker.parent.name.isascii() for marker in markers)
+
+
+def test_failed_comparisons_point_at_the_skill(pytester, monkeypatch, tmp_path):
+    summary = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    pytester.mkdir("page_scenarios")
+    (pytester.path / "page_scenarios" / "test_pages.py").write_text(
+        textwrap.dedent(
+            """
+            import pytest
+
+            @pytest.mark.parametrize("name", ["menu", "order"])
+            def test_matches_baseline(name): assert name == "order"
+
+            def test_renders(): assert False
+            """
+        )
+    )
+    result = pytester.runpytest("--platform", "desktop", "--device-class", "linux", "--artifacts", "out")
+    result.stdout.fnmatch_lines([f"1 page scenario comparison(s) failed; to triage them, read {SKILL}/SKILL.md"])
+    assert "1 page scenario comparison(s) failed; `servo-embedder-tests skill`" in summary.read_text(encoding="utf-8")
 
 
 def test_a_marker_shortens_the_timeout_of_a_test(pytester):

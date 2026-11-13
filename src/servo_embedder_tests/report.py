@@ -432,13 +432,22 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
     environment = report.environment if report else {}
     device = ", ".join(f"{key} {value}" for key, value in environment.items() if isinstance(value, str | int | float))
     written = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    failed = sum(
+        1 for (_, kind), result in results.items() if kind in KINDS and result.status == "FAIL" and result.unexpected
+    )
+    triage = (
+        f'<p class="note">{failed} comparison(s) failed. An agent can triage them with the skill that comes with '
+        "servo-embedder-tests: <code>servo-embedder-tests skill</code> prints where it is.</p>"
+        if failed
+        else ""
+    )
     page = (
         "<!DOCTYPE html>\n<html lang=en><head><meta charset=utf-8>"
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
         f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
         f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
-        f"{_overview(comparisons)}"
+        f"{_overview(comparisons)}{triage}"
         '<input type="checkbox" id="boxes" checked> <label for="boxes">Show region boxes</label>'
         f"<main>{summary}{''.join(sections)}</main></body></html>\n"
     )

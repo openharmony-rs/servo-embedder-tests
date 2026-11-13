@@ -72,14 +72,15 @@ Also check:
 If you can see images yourself, read the region crops directly and skip this step.
 
 Otherwise, describe the regions with an image-capable model through an OpenAI-compatible API, e.g. OpenAI's models
-or DeepSeek V4.1-Flash. The user provides the endpoint, key and model; never guess or reuse other credentials.
+or DeepSeek V4.1-Flash. The user provides the endpoint, key and model; never guess or reuse other credentials. The
+script is in this skill's folder, which `servo-embedder-tests skill` prints, and needs only Python.
 
 ```sh
 export SERVO_EMBEDDER_TESTS_VISION_BASE_URL=https://api.openai.com/v1   # or https://api.deepseek.com, ...
 export SERVO_EMBEDDER_TESTS_VISION_API_KEY=...                          # from the user
 export SERVO_EMBEDDER_TESTS_VISION_MODEL=...                            # an image-capable model
-python3 skills/compare-renderings/describe_regions.py <test folder> --dry-run      # what would be sent
-python3 skills/compare-renderings/describe_regions.py <test folder> --max-regions 4
+python3 <skill folder>/describe_regions.py <test folder> --dry-run      # what would be sent
+python3 <skill folder>/describe_regions.py <test folder> --max-regions 4
 ```
 
 - **Only what the measurements leave open.** Regions whose reading is a shift, anti-aliasing, spacing or an image
