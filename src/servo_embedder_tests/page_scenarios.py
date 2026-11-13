@@ -13,12 +13,19 @@ import contextlib
 import copy
 import datetime
 import json
+import os
+import pickle
 import shutil
+import subprocess
+import sys
 import time
 import tomllib
+import warnings
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import cast
 
 from PIL import Image, ImageChops, ImageDraw
 from selenium.common.exceptions import TimeoutException
@@ -36,6 +43,8 @@ from .pages import PageServer
 
 SUITE_CONFIG = "page-scenarios.toml"
 SCENARIO_CONFIG = "scenario.toml"
+# How many processes at most describe the differences of failed comparisons at a time.
+DESCRIBERS = 4
 # The configuration keys, with their defaults.
 DEFAULTS: dict[str, object] = {
     # The page to open, relative to the scenario's folder.
@@ -752,6 +761,89 @@ class Comparison:
         return f"{len(self.failures)} capture(s) differ from {what}: " + "; ".join(self.failures) + "; see diff.json"
 
 
+def _overlay(directory: Path, name: str) -> Path:
+    return directory / f"{name}-differing.png"
+
+
+@dataclass
+class Description:
+    """What describing the differences of a failed comparison takes: `report`, its `diff.json` so far, and the
+    differing captures, by name, with what they were compared with and their `Diff`."""
+
+    report: dict[str, object]
+    differing: list[tuple[str, Capture, Capture, diffing.Diff]]
+    directory: Path
+    labels: tuple[str, str]
+    reference: dict[str, Capture] | None
+
+    def run(self) -> None:
+        """Measures the differing regions, writes the review images to `directory` and adds both, with the DOM
+        changes, to the report, then writes it as `diff.json`."""
+        captures = cast(dict[str, dict[str, object]], self.report["captures"])
+        for name, stored, actual, diff in self.differing:
+            elements = actual.elements()
+            broken = [element for element in elements if element.get("image") == "broken"]
+            for region in diff.regions:
+                region.elements = diffing.elements_in(elements, region.box)
+            for region in diff.regions[: diffing.MAX_CROPS]:
+                measurement = diffing.measure(stored.shot, actual.shot, diff, region)
+                region.measured = asdict(measurement)
+                region.reading = measurement.reading(text=any(element.get("text") for element in region.elements))
+                missing = sorted({str(element["src"]) for element in diffing.elements_in(broken, region.box, 3)})
+                if missing:
+                    region.reading = f"image {', '.join(missing)} did not load in {self.labels[1]}; {region.reading}"
+            if self.reference and name in self.reference:
+                diffing.reference_hint(stored.shot, actual.shot, self.reference[name].shot, diff.regions)
+            overlay = _overlay(self.directory, name)
+            images = diffing.write_review_images(
+                stored.shot, actual.shot, diff, overlay, self.directory, name, self.labels
+            )
+            captures[name].update(
+                diff.to_dict(),
+                compare=images["compare"],
+                images=images,
+                dom_changes=diffing.dom_changes(
+                    _in_document(stored), _in_document(actual), paint=min(stored.dom_version, actual.dom_version) >= 2
+                ),
+            )
+        diffing.write_json(self.directory / "diff.json", self.report)
+
+
+class Describer:
+    """Runs `Description`s in processes of their own at a lower priority, a few at a time, so that a run goes on to
+    the next capture meanwhile. Not a multiprocessing pool, whose workers would import the main module of whoever
+    called `run_tests` again."""
+
+    def __init__(self, workers: int = DESCRIBERS) -> None:
+        self._pool = ThreadPoolExecutor(max(1, min(workers, os.cpu_count() or 1)), "describer")
+        self._pending: list[tuple[Path, Future[subprocess.CompletedProcess[bytes]]]] = []
+
+    def submit(self, description: Description) -> None:
+        command = [sys.executable, "-P", "-m", "servo_embedder_tests.describe"]
+        future = self._pool.submit(subprocess.run, command, input=pickle.dumps(description), capture_output=True)
+        self._pending.append((description.directory / "diff.json", future))
+
+    def wait(self) -> None:
+        """Waits for the descriptions. One that failed leaves its `diff.json` without it, but with why as
+        `description_error`, and warns."""
+        pending, self._pending = self._pending, []
+        for path, future in pending:
+            try:
+                done = future.result()
+            except OSError as error:
+                failure = str(error)
+            else:
+                if done.returncode == 0:
+                    continue
+                lines = done.stderr.decode(errors="replace").strip().splitlines()
+                failure = lines[-1] if lines else f"exit status {done.returncode}"
+            with contextlib.suppress(OSError, ValueError):
+                report = json.loads(path.read_text(encoding="utf-8"))
+                report["description_error"] = failure
+                diffing.write_json(path, report)
+            warnings.warn(f"describing the differences in {path} failed: {failure}", stacklevel=2)
+
+
 def compare_captures(
     expected: dict[str, Capture],
     rendering: Rendering,
@@ -760,13 +852,16 @@ def compare_captures(
     labels: tuple[str, str],
     reference: dict[str, Capture] | None = None,
     describe: Callable[[], dict[str, object]] | None = None,
+    describer: Describer | None = None,
 ) -> Comparison:
-    """Compares the captures of `rendering` with `expected`, those with the same names, and writes `diff.json` and the
-    review images of differing captures to `directory`. `reference` captures, from another engine, add a hint per
-    differing region whether the change moved toward them."""
+    """Compares the captures of `rendering` with `expected`, those with the same names, and writes `diff.json` to
+    `directory`. The `Description` of differing captures adds their measurements and review images to it, before this
+    returns or, with a `describer`, by that while the run goes on. `reference` captures, from another engine, add a
+    hint per differing region whether the change moved toward them."""
     directory.mkdir(parents=True, exist_ok=True)
     failures = []
-    captures: dict[str, object] = {}
+    captures: dict[str, dict[str, object]] = {}
+    differing: list[tuple[str, Capture, Capture, diffing.Diff]] = []
     for name in sorted(set(expected) - set(rendering.captures)):
         failures.append(f"{name}: not captured")
         captures[name] = {"matches": False, "summary": "not captured this time"}
@@ -780,42 +875,29 @@ def compare_captures(
                 "actual": str(actual.image),
             }
             continue
-        overlay = directory / f"{name}-differing.png"
+        overlay = _overlay(directory, name)
         try:
             diff = diffing.compare(stored.shot, actual.shot, preset, overlay=overlay)
         except ValueError as error:
             failures.append(f"{name}: {error}")
             captures[name] = {"matches": False, "summary": str(error), "actual": str(actual.image)}
             continue
-        entry: dict[str, object] = {"expected": str(stored.image), "actual": str(actual.image)}
-        if not diff.matches:
-            failures.append(f"{name}: {diff.summary()}")
-            elements = actual.elements()
-            broken = [element for element in elements if element.get("image") == "broken"]
-            for region in diff.regions:
-                region.elements = diffing.elements_in(elements, region.box)
-            for region in diff.regions[: diffing.MAX_CROPS]:
-                measurement = diffing.measure(stored.shot, actual.shot, diff, region)
-                region.measured = asdict(measurement)
-                region.reading = measurement.reading(text=any(element.get("text") for element in region.elements))
-                missing = sorted({str(element["src"]) for element in diffing.elements_in(broken, region.box, 3)})
-                if missing:
-                    region.reading = f"image {', '.join(missing)} did not load in {labels[1]}; {region.reading}"
-            if reference and name in reference:
-                diffing.reference_hint(stored.shot, actual.shot, reference[name].shot, diff.regions)
-            images = diffing.write_review_images(stored.shot, actual.shot, diff, overlay, directory, name, labels)
-            entry["compare"] = images["compare"]
-            entry["images"] = images
-            entry["dom_changes"] = diffing.dom_changes(
-                _in_document(stored), _in_document(actual), paint=min(stored.dom_version, actual.dom_version) >= 2
-            )
-        else:
+        if diff.matches:
             overlay.unlink(missing_ok=True)
-        captures[name] = {**diff.to_dict(), **entry}
+        else:
+            failures.append(f"{name}: {diff.summary()}")
+            differing.append((name, stored, actual, diff))
+        captures[name] = {**diff.to_dict(), "expected": str(stored.image), "actual": str(actual.image)}
     report: dict[str, object] = {"labels": list(labels), "captures": captures}
     if describe is not None:
         report.update(describe())
     diffing.write_json(directory / "diff.json", report)
+    if differing:
+        description = Description(report, differing, directory, labels, reference)
+        if describer is None:
+            description.run()
+        else:
+            describer.submit(description)
     return Comparison(not failures, failures, report)
 
 
@@ -848,6 +930,7 @@ class PageRuns:
         self.update_baselines = update_baselines
         self.update_references = update_references
         self.versions = dict(versions or {})
+        self.describer = Describer()
         self._renderings: dict[tuple[str, str], Rendering] = {}
 
     def rendering(self, engine: str, scenario: Scenario) -> Rendering:
@@ -891,6 +974,8 @@ class PageRuns:
         return rendering.captures, {"engine": rendering.info.get("engine"), "from": "rendered in this run"}
 
     def stop(self) -> None:
+        """Stops the engines, then waits for the descriptions of differences."""
         for engine in self.engines.values():
             with contextlib.suppress(Exception):
                 engine.stop()
+        self.describer.wait()

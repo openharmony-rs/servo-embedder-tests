@@ -184,6 +184,10 @@ It also writes `<capture>-compare.png` (expected, actual and the differing pixel
 for what the readings leave open: the `compare-renderings` skill describes how an agent triages a run, and its
 script asks any OpenAI-compatible endpoint about the regions.
 
+A comparison test passes or fails as soon as the tiles are compared. Describing the differences, the elements,
+readings, DOM changes and images, takes seconds per capture, so it runs in up to four background processes while the
+run goes on to the next test; `diff.json` and the images are complete when the run ends.
+
 For people, a run writes `report.html` to the artifacts folder: per scenario, each differing capture next to what it
 was compared with (hover the actual one to see the expected one in its place), the differing pixels, the regions
 numbered with their enlarged crops and readings, and the DOM changes. Where an agent triaged the run, the report also

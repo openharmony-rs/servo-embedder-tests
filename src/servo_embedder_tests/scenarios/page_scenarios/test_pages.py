@@ -4,7 +4,8 @@
 the seeded `Math.random()`).
 `test_matches_baseline` compares the captures of --engine with its baselines in --baselines, and
 `test_matches_reference` with those of --reference-engine, stored in --baselines or rendered in the run. Each page is
-rendered once per engine for all three. Differences are described in each test's `diff.json`.
+rendered once per engine for all three. Differences are described in each test's `diff.json`: the comparison tests
+decide at once, and describing the differences, the slow part, goes on in the background until the end of the run.
 """
 
 import pytest
@@ -49,6 +50,7 @@ def test_matches_baseline(scenario, page_runs, artifacts):
         ("baseline", page_runs.engine),
         page_runs.stored_reference(scenario),
         lambda: {"expected": store.origin(scenario.name), "actual": rendering.info.get("engine")},
+        describer=page_runs.describer,
     )
     assert comparison.matches, comparison.message(f"the baseline in {store.directory(scenario.name)}")
 
@@ -69,5 +71,6 @@ def test_matches_reference(scenario, page_runs, artifacts):
         artifacts,
         (page_runs.reference, page_runs.engine),
         describe=lambda: {"expected": origin, "actual": rendering.info.get("engine")},
+        describer=page_runs.describer,
     )
     assert comparison.matches, comparison.message(f"{page_runs.reference}'s rendering")

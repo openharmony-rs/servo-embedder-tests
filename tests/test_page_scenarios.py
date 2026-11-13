@@ -17,6 +17,7 @@ from servo_embedder_tests.page_scenarios import (
     SEED_RANDOM,
     Capture,
     CaptureStore,
+    Describer,
     PageRuns,
     Renderer,
     Rendering,
@@ -200,6 +201,43 @@ def test_a_region_names_the_image_that_did_not_load(tmp_path):
     entry = changed.report["captures"]["page-0"]
     assert entry["regions"][0]["reading"].startswith("image /menu/a.jpg did not load in b; ")
     assert entry["dom_changes"][0]["image"] == ["loaded", "broken"]
+
+
+def test_a_describer_describes_differences_in_the_background(tmp_path):
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old", photo="loaded"))
+    rendering = _rendering(tmp_path / "new", photo="broken")
+    inline = compare_captures(store.captures("menu"), rendering, store_preset(), tmp_path / "inline", ("a", "b"))
+    describer = Describer()
+    background = compare_captures(
+        store.captures("menu"), rendering, store_preset(), tmp_path / "background", ("a", "b"), describer=describer
+    )
+    assert background.failures == inline.failures
+    assert "images" not in json.loads((tmp_path / "background" / "diff.json").read_text())["captures"]["page-0"]
+    describer.wait()
+    report = json.loads((tmp_path / "background" / "diff.json").read_text())
+    assert report == json.loads((tmp_path / "inline" / "diff.json").read_text())
+    entry = report["captures"]["page-0"]
+    assert entry["regions"][0]["reading"].startswith("image /menu/a.jpg did not load in b; ")
+    assert (tmp_path / "background" / entry["compare"]).is_file()
+    assert (tmp_path / "background" / entry["regions"][0]["crop"]).is_file()
+
+
+def test_a_description_that_fails_says_why_in_diff_json(tmp_path):
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old"))
+    rendering = _rendering(tmp_path / "new", heading="Menu!")
+    rendering.captures["page-0"].dom.write_text("{")
+    describer = Describer()
+    changed = compare_captures(
+        store.captures("menu"), rendering, store_preset(), tmp_path / "b", ("a", "b"), describer=describer
+    )
+    assert not changed.matches
+    with pytest.warns(UserWarning, match=r"describing the differences in .*diff\.json failed: .*JSONDecodeError"):
+        describer.wait()
+    report = json.loads((tmp_path / "b" / "diff.json").read_text())
+    assert "JSONDecodeError" in report["description_error"]
+    assert report["captures"]["page-0"]["summary"] == changed.report["captures"]["page-0"]["summary"]
 
 
 def test_the_report_shows_differences_with_the_triage(tmp_path):
