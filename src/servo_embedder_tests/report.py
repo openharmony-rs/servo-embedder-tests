@@ -316,6 +316,8 @@ def _comparison(prefix: str, test: str, folder: Path | None, result: Result | No
     head = f'<h3 id="{prefix}">{badge} {escape(labels[1])} against {escape(against)} {_status(result)}</h3>'
     if sides := _sides(report):
         head += f"<p class=muted>{sides}</p>"
+    if error := report.get("description_error"):
+        head += f"<p>Describing the differences failed: <code>{escape(str(error))}</code></p>"
     triage = _load(folder / TRIAGE)
     if triage:
         agent, verdict, summary = (escape(str(triage.get(key, ""))) for key in ("agent", "verdict", "summary"))
