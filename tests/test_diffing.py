@@ -285,3 +285,16 @@ def test_elements_in_a_region_are_the_smallest_first():
     elements = [_element("body>div", [0, 0, 480, 400]), _element("body>div>h1", [16, 20, 200, 30])]
     found = diffing.elements_in(elements, (10, 10, 100, 40))
     assert [e["path"] for e in found] == ["body>div>h1", "body>div"]
+
+
+def test_rank_filters_give_pillows_results():
+    rng = random.Random(7)
+    for width, height in ((53, 37), (9, 6)):
+        noise = Image.frombytes("L", (width, height), bytes(rng.randrange(256) for _ in range(width * height)))
+        mask = noise.point(lambda value: 255 if value > 160 else 0)
+        for size in (3, 7, 31):
+            assert diffing._median(noise, size).tobytes() == noise.filter(ImageFilter.MedianFilter(size)).tobytes()
+        for size in (1, 3, 15):
+            for image in (noise, mask):
+                assert diffing._minimum(image, size).tobytes() == image.filter(ImageFilter.MinFilter(size)).tobytes()
+                assert diffing._maximum(image, size).tobytes() == image.filter(ImageFilter.MaxFilter(size)).tobytes()
