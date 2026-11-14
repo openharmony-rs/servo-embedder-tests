@@ -15,6 +15,8 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+import cv2
+import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 # (left, top, right, bottom) in CSS pixels of the viewport.
@@ -449,6 +451,22 @@ def _best_offset(a: Image.Image, b: Image.Image, search: int, steps: int = 4) ->
     return fine[1] / steps, fine[2] / steps, fine[0], unshifted
 
 
+# Pillow's MedianFilter, MinFilter and MaxFilter of "L" images, with the same results, by OpenCV: Pillow's take time
+# that grows with the square of `size`, for a median of 31 px about 200 times as long.
+def _median(image: Image.Image, size: int) -> Image.Image:
+    return Image.fromarray(cv2.medianBlur(np.asarray(image), size))
+
+
+def _minimum(image: Image.Image, size: int) -> Image.Image:
+    kernel = np.ones((size, size), np.uint8)
+    return Image.fromarray(cv2.erode(np.asarray(image), kernel, borderType=cv2.BORDER_REPLICATE))
+
+
+def _maximum(image: Image.Image, size: int) -> Image.Image:
+    kernel = np.ones((size, size), np.uint8)
+    return Image.fromarray(cv2.dilate(np.asarray(image), kernel, borderType=cv2.BORDER_REPLICATE))
+
+
 def _inks(a: Image.Image, b: Image.Image, radius: int) -> tuple[tuple[int, int], tuple[int, int]]:
     """`_ink` of the grayscale images `a` and `b` against their backgrounds, the median over a window wider than
     strokes, which keeps gradients but not text. Content wider than half the window, such as a thick stroke, is its
@@ -456,7 +474,7 @@ def _inks(a: Image.Image, b: Image.Image, radius: int) -> tuple[tuple[int, int],
     `radius` across, that one is the background of both, so that the content counts as ink. Narrower areas are edges
     that moved, or the median's skew at the image's border. When their backgrounds differ, each keeps its own."""
     size = 2 * radius + 1
-    median_a, median_b = a.filter(ImageFilter.MedianFilter(size)), b.filter(ImageFilter.MedianFilter(size))
+    median_a, median_b = _median(a, size), _median(b, size)
     histogram_a, histogram_b = a.histogram(), b.histogram()
     mode_a = max(range(256), key=histogram_a.__getitem__)
     mode_b = max(range(256), key=histogram_b.__getitem__)
@@ -474,7 +492,7 @@ def _inks(a: Image.Image, b: Image.Image, radius: int) -> tuple[tuple[int, int],
         if only_other.getbbox() is None:
             return own
         width = radius | 1
-        wide = only_other.filter(ImageFilter.MinFilter(width)).filter(ImageFilter.MaxFilter(width))
+        wide = _maximum(_minimum(only_other, width), width)
         return Image.composite(other, own, wide)
 
     return _ink(a, background(median_a, median_b)), _ink(b, background(median_b, median_a))
@@ -535,9 +553,7 @@ def _on_shared_edges(a: Image.Image, b: Image.Image) -> float | None:
     have. None if none differ."""
     differing = ImageChops.difference(a, b).point(lambda value: 255 if value > 4 else 0)
     edges = [
-        image.filter(ImageFilter.FIND_EDGES)
-        .point(lambda value: 255 if value > EDGE_CONTRAST else 0)
-        .filter(ImageFilter.MaxFilter(3))
+        _maximum(image.filter(ImageFilter.FIND_EDGES).point(lambda value: 255 if value > EDGE_CONTRAST else 0), 3)
         for image in (a, b)
     ]
     total = differing.histogram()[255]
@@ -586,12 +602,12 @@ def _colours_lost(a: Image.Image, b: Image.Image, scale: float) -> list[tuple[in
         if mask.histogram()[255] < floor:
             continue
         similar = ImageChops.lighter(ImageChops.lighter(masks_b[k - 1], masks_b[k]), masks_b[(k + 1) % bins])
-        gone = ImageChops.multiply(mask, ImageChops.invert(similar.filter(ImageFilter.MaxFilter(reach))))
+        gone = ImageChops.multiply(mask, ImageChops.invert(_maximum(similar, reach)))
         count = gone.histogram()[255]
         if count < floor:
             continue
         was, now = ImageStat.Stat(a, gone).mean, ImageStat.Stat(b, gone).mean
-        around = ImageChops.subtract(ImageChops.subtract(gone.filter(ImageFilter.MaxFilter(reach)), gone), mask)
+        around = ImageChops.subtract(ImageChops.subtract(_maximum(gone, reach), gone), mask)
         background = ImageStat.Stat(a, around).median if around.getbbox() else ImageStat.Stat(a).median
         apart = max(abs(n - g) for n, g in zip(now, background, strict=True))
         if colour_name(was) != colour_name(now) and apart > 48:
