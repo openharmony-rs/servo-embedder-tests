@@ -535,6 +535,7 @@ dependencies = [
     { name = "pytest" },
     { name = "selenium" },
     { name = "tomlkit" },
+    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -553,6 +554,7 @@ requires-dist = [
     { name = "pytest", specifier = ">=8.3" },
     { name = "selenium", specifier = ">=4.30" },
     { name = "tomlkit", specifier = ">=0.13" },
+    { name = "urllib3", specifier = ">=2" },
 ]
 
 [package.metadata.requires-dev]

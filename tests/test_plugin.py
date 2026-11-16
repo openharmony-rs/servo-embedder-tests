@@ -59,6 +59,22 @@ def test_a_missing_expectations_file_is_an_error(pytester):
     result.stderr.fnmatch_lines(["*--expectations missing.toml does not exist*"])
 
 
+def test_a_webdriver_command_without_an_answer_is_a_timeout(pytester):
+    pytester.makepyfile(
+        test_fake=textwrap.dedent(
+            """
+            import urllib3
+
+            def test_hung():
+                raise urllib3.exceptions.ReadTimeoutError(None, "/session/s/execute/sync", "Read timed out.")
+            """
+        )
+    )
+    pytester.runpytest("--platform", "desktop", "--device-class", "linux", "--artifacts", "out")
+    data = json.loads((pytester.path / "out" / "results.json").read_text())
+    assert data["results"]["test_fake.py::test_hung"]["status"] == "TIMEOUT"
+
+
 def test_expected_failures_and_unexpected_pass(pytester):
     result, data = run(
         pytester,
