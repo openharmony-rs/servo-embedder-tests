@@ -15,7 +15,8 @@ doesn't settle the question.
 - `<artifacts>/results.json`: failed tests with their message. The message names each differing capture and its
   largest region.
 - Each failed test's folder (`<artifacts>/page_scenarios_test_pages.py_test_matches_<kind>_<scenario>_/`) has:
-  - `diff.json`;
+  - `diff.json`; one with `description_error` lacks the readings, DOM changes and images below, because the run was
+    interrupted or describing the differences failed: run the scenario again rather than triage without them;
   - `<capture>-compare.png`: expected | actual | differing pixels;
   - `regions/<capture>-<n>.png`: the crop of each region, largest first.
 - The renderings are in `<artifacts>/page-scenarios_<engine>_<scenario>/`:
