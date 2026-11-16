@@ -8,6 +8,7 @@ from collections.abc import Callable
 
 from selenium import webdriver
 from selenium.webdriver.common.options import ArgOptions
+from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.remote.client_config import ClientConfig
 from selenium.webdriver.remote.remote_connection import RemoteConnection
 
@@ -50,7 +51,8 @@ def connect(
     time.sleep(grace)
     options = ArgOptions()
     options.set_capability("browserName", "servo")
-    config = ClientConfig(remote_server_addr=f"http://127.0.0.1:{port}", timeout=120)
+    direct = Proxy({"proxyType": ProxyType.DIRECT})
+    config = ClientConfig(remote_server_addr=f"http://127.0.0.1:{port}", timeout=120, proxy=direct)
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
