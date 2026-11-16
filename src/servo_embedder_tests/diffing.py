@@ -15,8 +15,6 @@ from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import cv2
-import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 # (left, top, right, bottom) in CSS pixels of the viewport.
@@ -451,18 +449,28 @@ def _best_offset(a: Image.Image, b: Image.Image, search: int, steps: int = 4) ->
     return fine[1] / steps, fine[2] / steps, fine[0], unshifted
 
 
-# Pillow's MedianFilter, MinFilter and MaxFilter of "L" images, with the same results, by OpenCV: Pillow's take time
-# that grows with the square of `size`, for a median of 31 px about 200 times as long.
+# Pillow's MedianFilter, MinFilter and MaxFilter of non-empty "L" images with odd sizes, with the same results, by
+# OpenCV: Pillow's take time that grows with the square of `size`, for a median of 31 px about 200 times as long.
+# OpenCV is imported only here, so that a broken installation fails the descriptions that need it, not every run.
 def _median(image: Image.Image, size: int) -> Image.Image:
+    import cv2
+    import numpy as np
+
     return Image.fromarray(cv2.medianBlur(np.asarray(image), size))
 
 
 def _minimum(image: Image.Image, size: int) -> Image.Image:
+    import cv2
+    import numpy as np
+
     kernel = np.ones((size, size), np.uint8)
     return Image.fromarray(cv2.erode(np.asarray(image), kernel, borderType=cv2.BORDER_REPLICATE))
 
 
 def _maximum(image: Image.Image, size: int) -> Image.Image:
+    import cv2
+    import numpy as np
+
     kernel = np.ones((size, size), np.uint8)
     return Image.fromarray(cv2.dilate(np.asarray(image), kernel, borderType=cv2.BORDER_REPLICATE))
 

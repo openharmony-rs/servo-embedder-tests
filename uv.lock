@@ -548,7 +548,7 @@ requires-dist = [
     { name = "hdc-py", specifier = ">=0.2.1,<0.3" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "ohos-test-ime", specifier = ">=0.1,<0.2" },
-    { name = "opencv-python-headless", specifier = ">=4.10" },
+    { name = "opencv-python-headless", specifier = ">=4.10.0.84" },
     { name = "pillow", specifier = ">=11" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "selenium", specifier = ">=4.30" },
