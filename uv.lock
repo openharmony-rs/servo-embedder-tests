@@ -523,7 +523,7 @@ wheels = [
 
 [[package]]
 name = "servo-embedder-tests"
-version = "0.1.2"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "hdc-py" },
