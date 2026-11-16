@@ -14,6 +14,7 @@ from importlib import resources
 from pathlib import Path
 
 import pytest
+import urllib3
 from ohos_test_ime import TestIme
 from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.remote.webdriver import WebDriver
@@ -351,7 +352,8 @@ def _status(call: pytest.CallInfo[None], item: pytest.Item) -> str:
         return "PASS"
     if call.excinfo.errisinstance(pytest.skip.Exception):
         return "SKIP"
-    if call.excinfo.errisinstance((ScenarioTimeout, TimeoutException)):
+    # urllib3's: a WebDriver command that got no answer within the client's timeout.
+    if call.excinfo.errisinstance((ScenarioTimeout, TimeoutException, urllib3.exceptions.TimeoutError)):
         return "TIMEOUT"
     if call.excinfo.errisinstance(AppCrashed):
         return "CRASH"
