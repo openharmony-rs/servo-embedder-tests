@@ -254,6 +254,7 @@ class ArkWebEngine(Engine):
             raise ScenarioError(f"no chromedriver for ArkWeb's Chromium {version}: {hint}")
         options = webdriver.ChromeOptions()
         options.debugger_address = f"127.0.0.1:{self.port}"
+        options.ignore_local_proxy_environment_variables()
         try:
             return webdriver.Chrome(service=Service(str(executable), log_output=str(self.log)), options=options)
         except SessionNotCreatedException as error:
