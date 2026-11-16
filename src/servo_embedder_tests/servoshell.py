@@ -89,6 +89,10 @@ class ServoshellOhos:
     def is_running(self) -> bool:
         return self.pid is not None and self.device.pid_of(self.bundle) == self.pid
 
+    def exited(self) -> bool:
+        """Whether the app was started and its process is gone, though `stop` wasn't called."""
+        return self.pid is not None and self.device.pid_of(self.bundle) != self.pid
+
 
 class ServoshellDesktop:
     """servoshell as a local binary."""
@@ -132,6 +136,10 @@ class ServoshellDesktop:
 
     def is_running(self) -> bool:
         return self.process is not None and self.process.poll() is None
+
+    def exited(self) -> bool:
+        """Whether servoshell was started and its process is gone, though `stop` wasn't called."""
+        return self.process is not None and self.process.poll() is not None
 
 
 Servoshell = ServoshellOhos | ServoshellDesktop

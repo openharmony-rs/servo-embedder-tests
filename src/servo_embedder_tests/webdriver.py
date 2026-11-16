@@ -12,7 +12,7 @@ from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver.remote.client_config import ClientConfig
 from selenium.webdriver.remote.remote_connection import RemoteConnection
 
-from .errors import ScenarioError
+from .errors import AppCrashed, ScenarioError
 
 
 def _port_open(port: int) -> bool:
@@ -45,7 +45,7 @@ def connect(
             raise ScenarioError(f"WebDriver server on port {port} did not come up within {timeout}s")
         if alive is not None and time.monotonic() > next_alive_check:
             if not alive():
-                raise ScenarioError("servoshell exited before its WebDriver server came up")
+                raise AppCrashed("servoshell exited before its WebDriver server came up")
             next_alive_check = time.monotonic() + 2
         time.sleep(0.3)
     time.sleep(grace)
@@ -60,4 +60,6 @@ def connect(
         except Exception as error:
             last_error = error
             time.sleep(0.5)
+    if alive is not None and not alive():
+        raise AppCrashed(f"servoshell exited while a WebDriver session was being created: {last_error}")
     raise ScenarioError(f"Could not create a WebDriver session on port {port}: {last_error}")

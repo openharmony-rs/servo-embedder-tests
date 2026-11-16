@@ -368,6 +368,15 @@ def _is_running(app: Servoshell | WebViewApp) -> bool | None:
         return None
 
 
+def _exited(app: Servoshell) -> bool:
+    """Whether servoshell was started and has exited, as opposed to not started or stopped; False if that can't be
+    told."""
+    try:
+        return app.exited()
+    except Exception:
+        return False
+
+
 def _crashed(app: WebViewApp) -> bool:
     """Whether the app exited or one of its processes crashed; False if that can't be told."""
     try:
@@ -414,8 +423,10 @@ def pytest_runtest_makereport(
     funcargs = getattr(item, "funcargs", {})
     session = funcargs.get("servo")
     webview_apps = [value for value in funcargs.values() if isinstance(value, WebViewApp)]
-    apps: list[Servoshell | WebViewApp] = [session.app] if isinstance(session, ServoSession) else []
-    if status in ("PASS", "FAIL") and any(_is_running(app) is False for app in apps + webview_apps):
+    servoshells = [session.app] if isinstance(session, ServoSession) else []
+    if status in ("PASS", "FAIL") and (
+        any(_exited(app) for app in servoshells) or any(_is_running(app) is False for app in webview_apps)
+    ):
         status = "CRASH"
     elif status in ("FAIL", "TIMEOUT") and any(_crashed(app) for app in webview_apps):
         status = "CRASH"

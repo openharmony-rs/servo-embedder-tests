@@ -219,6 +219,43 @@ def test_device_loss_keeps_results(pytester, monkeypatch):
     assert data["results"]["test_fake.py::test_fail"]["message"].startswith("AssertionError: broken")
 
 
+def test_servoshell_exiting_at_start_is_a_crash_and_not_starting_a_failure(pytester):
+    pytester.makeconftest(
+        textwrap.dedent(
+            """
+            import sys
+            from pathlib import Path
+
+            import pytest
+            from servo_embedder_tests.platform import DesktopHost
+            from servo_embedder_tests.plugin import ServoSession
+            from servo_embedder_tests.servoshell import ServoshellDesktop
+
+            @pytest.fixture
+            def servo(request, scenario_run):
+                # Python rejects servoshell's arguments and exits at once.
+                binary = Path(sys.executable if "exits" in request.node.name else "no-such-servoshell")
+                session = ServoSession(scenario_run, ServoshellDesktop(DesktopHost(), binary), request.node, None, None)
+                yield session
+                session.stop()
+            """
+        )
+    )
+    pytester.makepyfile(
+        test_fake=textwrap.dedent(
+            """
+            def test_exits_at_start(servo): servo.start()
+            def test_cannot_start(servo): servo.start()
+            """
+        )
+    )
+    pytester.runpytest("--platform", "desktop", "--device-class", "linux", "--artifacts", "out")
+    results = json.loads((pytester.path / "out" / "results.json").read_text())["results"]
+    assert results["test_fake.py::test_exits_at_start"]["status"] == "CRASH"
+    assert "exited before its WebDriver server came up" in results["test_fake.py::test_exits_at_start"]["message"]
+    assert results["test_fake.py::test_cannot_start"]["status"] == "FAIL"
+
+
 def test_a_shared_servoshell_restarts_after_a_test_that_did_not_pass(pytester, monkeypatch):
     # The conftest below replaces it for the whole process; this restores it after the test.
     monkeypatch.setattr(plugin, "connect", plugin.connect)
