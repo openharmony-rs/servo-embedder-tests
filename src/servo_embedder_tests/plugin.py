@@ -21,7 +21,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 from .engines import ArkWebEngine, Engine, ServoshellEngine
 from .errors import AppCrashed, ScenarioError, ScenarioTimeout
 from .expectations import Expectations, Result, RunReport
-from .page_scenarios import PageRuns, Renderer
+from .page_scenarios import Describer, PageRuns, Renderer
 from .pages import PageServer
 from .platform import DesktopHost, HilogStream, OhosDevice, Platform
 from .proxy import MitmProxy, ProxyMode
@@ -142,6 +142,7 @@ class ScenarioRun:
     report: RunReport = field(init=False)
     stack: contextlib.ExitStack = field(default_factory=contextlib.ExitStack)
     page_report: Path | None = None
+    describer: Describer = field(default_factory=Describer)
 
     def __post_init__(self) -> None:
         self.expectations = Expectations.load(self.config.option.expectations)
@@ -287,11 +288,15 @@ def _clear_artifacts(directory: Path) -> None:
         shutil.rmtree(marker.parent)
 
 
-def pytest_sessionfinish(session: pytest.Session) -> None:
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int | pytest.ExitCode) -> None:
     config = session.config
     if RUN_KEY not in config.stash:
         return
     run = _run(config)
+    # An interrupted run tears its fixtures down only after this, and shouldn't wait for descriptions anyway.
+    if exitstatus == pytest.ExitCode.INTERRUPTED:
+        run.describer.stop()
+    run.describer.wait()
     path = config.option.results_json or run.artifacts / "results.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(run.report.to_json(), encoding="utf-8")
@@ -713,6 +718,7 @@ def page_runs(scenario_run: ScenarioRun, platform: Platform, pages: PageServer) 
             )
             if name and version
         },
+        scenario_run.describer,
     )
     yield runs
     runs.stop()

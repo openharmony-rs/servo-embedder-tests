@@ -1,8 +1,10 @@
 import json
+import os
 import shutil
 import subprocess
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
 
@@ -233,11 +235,53 @@ def test_a_description_that_fails_says_why_in_diff_json(tmp_path):
         store.captures("menu"), rendering, store_preset(), tmp_path / "b", ("a", "b"), describer=describer
     )
     assert not changed.matches
-    with pytest.warns(UserWarning, match=r"describing the differences in .*diff\.json failed: .*JSONDecodeError"):
+    with pytest.warns(UserWarning, match=r"describing the differences failed: .*diff\.json: .*JSONDecodeError"):
         describer.wait()
     report = json.loads((tmp_path / "b" / "diff.json").read_text())
     assert "JSONDecodeError" in report["description_error"]
     assert report["captures"]["page-0"]["summary"] == changed.report["captures"]["page-0"]["summary"]
+
+
+def _stuck_comparisons(tmp_path, describer, names):
+    """Comparisons whose descriptions hang: their reference image is a pipe that nothing writes to."""
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old"))
+    rendering = _rendering(tmp_path / "new", heading="Menu!")
+    stuck = tmp_path / "stuck.png"
+    os.mkfifo(stuck)
+    reference = {"page-0": replace(rendering.captures["page-0"], image=stuck)}
+    for name in names:
+        compare_captures(
+            store.captures("menu"),
+            rendering,
+            store_preset(),
+            tmp_path / name,
+            ("a", "b"),
+            reference,
+            describer=describer,
+        )
+    return [json.loads((tmp_path / name / "diff.json").read_text()) for name in names]
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+def test_a_description_that_takes_too_long_is_ended(tmp_path):
+    describer = Describer(timeout=2)
+    _stuck_comparisons(tmp_path, describer, ["b"])
+    with pytest.warns(UserWarning, match="took longer than 2s"):
+        describer.wait()
+    assert json.loads((tmp_path / "b" / "diff.json").read_text())["description_error"] == "took longer than 2s"
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+def test_stopping_ends_running_descriptions_and_cancels_queued_ones(tmp_path):
+    describer = Describer(workers=1)
+    _stuck_comparisons(tmp_path, describer, ["b", "c"])
+    describer.stop()
+    with pytest.warns(UserWarning, match="stopped"):
+        describer.wait()
+    errors = [json.loads((tmp_path / name / "diff.json").read_text())["description_error"] for name in "bc"]
+    assert set(errors) <= {"stopped", "stopped before it started"}
+    assert errors[1] == "stopped before it started"
 
 
 def test_the_report_shows_differences_with_the_triage(tmp_path):
