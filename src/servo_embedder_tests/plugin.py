@@ -130,6 +130,12 @@ def pytest_configure(config: pytest.Config) -> None:
         raise pytest.UsageError("--reference-engine-version needs --reference-engine")
     if getattr(config.option, "platform", None) is None or config.option.collectonly:
         return
+    expectations = config.option.expectations
+    if expectations is not None and not expectations.is_file():
+        raise pytest.UsageError(
+            f"--expectations {expectations} does not exist; leave the option out to expect every test to pass, or "
+            "write the file with `servo-embedder-tests update-expectations`"
+        )
     config.stash[RUN_KEY] = ScenarioRun(config)
 
 

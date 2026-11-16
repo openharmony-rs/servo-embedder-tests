@@ -52,6 +52,13 @@ def test_no_expectations_means_pass(pytester):
     assert data["results"]["test_fake.py::test_ohos_only"]["status"] == "SKIP"
 
 
+def test_a_missing_expectations_file_is_an_error(pytester):
+    pytester.makepyfile(test_fake="def test_pass(): pass\n")
+    result = pytester.runpytest("--platform", "desktop", "--expectations", "missing.toml", "--artifacts", "out")
+    assert result.ret == pytest.ExitCode.USAGE_ERROR
+    result.stderr.fnmatch_lines(["*--expectations missing.toml does not exist*"])
+
+
 def test_expected_failures_and_unexpected_pass(pytester):
     result, data = run(
         pytester,
