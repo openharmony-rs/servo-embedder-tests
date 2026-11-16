@@ -1,7 +1,9 @@
 """Runs the plugin on desktop against a fake app, to check expectations handling end to end."""
 
 import json
+import os
 import textwrap
+import time
 
 import pytest
 
@@ -254,6 +256,47 @@ def test_servoshell_exiting_at_start_is_a_crash_and_not_starting_a_failure(pytes
     assert results["test_fake.py::test_exits_at_start"]["status"] == "CRASH"
     assert "exited before its WebDriver server came up" in results["test_fake.py::test_exits_at_start"]["message"]
     assert results["test_fake.py::test_cannot_start"]["status"] == "FAIL"
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="needs named pipes")
+def test_an_interrupted_run_stops_the_descriptions_before_the_report(pytester):
+    pytester.makepyfile(
+        test_fake=textwrap.dedent(
+            """
+            import os
+            from dataclasses import replace
+
+            from PIL import Image
+            from servo_embedder_tests.diffing import BASELINE
+            from servo_embedder_tests.page_scenarios import Capture, Rendering, compare_captures
+
+            def capture(path, colour):
+                Image.new("RGB", (64, 64), colour).save(path)
+                return Capture("page-0", path, path.with_suffix(".json"), (64, 64), (0, 0), [])
+
+            def test_interrupted(tmp_path, scenario_run):
+                stuck = tmp_path / "stuck.png"
+                os.mkfifo(stuck)
+                expected = {"page-0": capture(tmp_path / "a.png", "white")}
+                actual = capture(tmp_path / "b.png", "black")
+                rendering = Rendering("servoshell", "menu", tmp_path, {"page-0": actual})
+                reference = {"page-0": replace(actual, image=stuck)}
+                folder = scenario_run.artifacts / "comparison"
+                compare_captures(
+                    expected, rendering, BASELINE, folder, ("a", "b"), reference, describer=scenario_run.describer
+                )
+                raise KeyboardInterrupt
+            """
+        )
+    )
+    start = time.monotonic()
+    result = pytester.runpytest(
+        "--platform", "desktop", "--device-class", "linux", "--artifacts", "out", no_reraise_ctrlc=True
+    )
+    assert result.ret == pytest.ExitCode.INTERRUPTED
+    assert time.monotonic() - start < 30
+    report = json.loads((pytester.path / "out" / "comparison" / "diff.json").read_text())
+    assert report["description_error"] in ("stopped", "stopped before it started")
 
 
 def test_a_shared_servoshell_restarts_after_a_test_that_did_not_pass(pytester, monkeypatch):
