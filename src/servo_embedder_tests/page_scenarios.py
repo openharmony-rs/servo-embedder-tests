@@ -18,11 +18,12 @@ import pickle
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import warnings
 from collections.abc import Callable, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import cast
@@ -43,8 +44,10 @@ from .pages import PageServer
 
 SUITE_CONFIG = "page-scenarios.toml"
 SCENARIO_CONFIG = "scenario.toml"
-# How many processes at most describe the differences of failed comparisons at a time.
+# How many processes at most describe the differences of failed comparisons at a time, and how many seconds each may
+# take.
 DESCRIBERS = 4
+DESCRIPTION_TIMEOUT = 300
 # The configuration keys, with their defaults.
 DEFAULTS: dict[str, object] = {
     # The page to open, relative to the scenario's folder.
@@ -814,34 +817,89 @@ class Describer:
     the next capture meanwhile. Not a multiprocessing pool, whose workers would import the main module of whoever
     called `run_tests` again."""
 
-    def __init__(self, workers: int = DESCRIBERS) -> None:
+    def __init__(self, workers: int = DESCRIBERS, timeout: float = DESCRIPTION_TIMEOUT) -> None:
+        self.timeout = timeout
         self._pool = ThreadPoolExecutor(max(1, min(workers, os.cpu_count() or 1)), "describer")
-        self._pending: list[tuple[Path, Future[subprocess.CompletedProcess[bytes]]]] = []
+        self._pending: list[tuple[Path, Future[str | None]]] = []
+        self._lock = threading.Lock()
+        self._processes: set[subprocess.Popen[bytes]] = set()
+        self._stopped = False
 
     def submit(self, description: Description) -> None:
-        command = [sys.executable, "-P", "-m", "servo_embedder_tests.describe"]
-        future = self._pool.submit(subprocess.run, command, input=pickle.dumps(description), capture_output=True)
+        future = self._pool.submit(self._run, pickle.dumps(description))
         self._pending.append((description.directory / "diff.json", future))
 
+    def _run(self, payload: bytes) -> str | None:
+        """Describes in a process of its own, which imports this package from where this process does. Returns why
+        that failed, if it did."""
+        with self._lock:
+            if self._stopped:
+                return "stopped before it started"
+            process = subprocess.Popen(
+                [sys.executable, "-P", "-m", "servo_embedder_tests.describe"],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
+                creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0),
+            )
+            self._processes.add(process)
+        try:
+            _, stderr = process.communicate(payload, timeout=self.timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            return f"took longer than {self.timeout:g}s"
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+        if process.returncode == 0:
+            return None
+        if self._stopped:
+            return "stopped"
+        lines = stderr.decode(errors="replace").strip().splitlines()
+        return lines[-1] if lines else f"exit status {process.returncode}"
+
+    def stop(self) -> None:
+        """Cancels the descriptions that haven't started and ends those that run."""
+        with self._lock:
+            self._stopped = True
+            for process in self._processes:
+                process.kill()
+        self._pool.shutdown(wait=False, cancel_futures=True)
+
     def wait(self) -> None:
-        """Waits for the descriptions. One that failed leaves its `diff.json` without it, but with why as
-        `description_error`, and warns."""
+        """Waits for the descriptions, or stops them when interrupted. One that failed or was stopped leaves its
+        `diff.json` without it, but with why as `description_error`; failures end in one warning."""
         pending, self._pending = self._pending, []
+        try:
+            failures = self._record(pending)
+        except BaseException:
+            self.stop()
+            self._record(pending)
+            raise
+        if failures:
+            warnings.warn("describing the differences failed: " + "; ".join(failures), stacklevel=2)
+
+    @staticmethod
+    def _record(pending: list[tuple[Path, Future[str | None]]]) -> list[str]:
+        """Waits for `pending` and notes each failure in its `diff.json`; returns the failures."""
+        failures = []
         for path, future in pending:
             try:
-                done = future.result()
-            except OSError as error:
-                failure = str(error)
-            else:
-                if done.returncode == 0:
-                    continue
-                lines = done.stderr.decode(errors="replace").strip().splitlines()
-                failure = lines[-1] if lines else f"exit status {done.returncode}"
+                failure = future.result()
+            except CancelledError:
+                failure = "stopped before it started"
+            except Exception as error:
+                failure = f"{type(error).__name__}: {error}"
+            if failure is None:
+                continue
             with contextlib.suppress(OSError, ValueError):
                 report = json.loads(path.read_text(encoding="utf-8"))
                 report["description_error"] = failure
                 diffing.write_json(path, report)
-            warnings.warn(f"describing the differences in {path} failed: {failure}", stacklevel=2)
+            failures.append(f"{path}: {failure}")
+        return failures
 
 
 def compare_captures(
@@ -916,6 +974,7 @@ class PageRuns:
         update_baselines: bool = False,
         update_references: bool = False,
         versions: Mapping[str, str] | None = None,
+        describer: Describer | None = None,
     ) -> None:
         """`versions` names the builds of engines, e.g. a commit, for whoever compares their renderings."""
         if engine not in engines:
@@ -930,7 +989,7 @@ class PageRuns:
         self.update_baselines = update_baselines
         self.update_references = update_references
         self.versions = dict(versions or {})
-        self.describer = Describer()
+        self.describer = describer or Describer()
         self._renderings: dict[tuple[str, str], Rendering] = {}
 
     def rendering(self, engine: str, scenario: Scenario) -> Rendering:
