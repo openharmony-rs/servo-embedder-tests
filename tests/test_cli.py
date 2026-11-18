@@ -27,6 +27,15 @@ def test_selects_bundled_folders_and_files(pytester):
     ]
 
 
+def test_page_scenarios_compare_with_the_reference_before_their_baselines(pytester):
+    for name in ("a", "b"):
+        (pytester.path / "pages" / name).mkdir(parents=True)
+        (pytester.path / "pages" / name / "index.html").write_text("<!DOCTYPE html><title>t</title>")
+    tests = collected(pytester, "page_scenarios/", "--page-scenarios", str(pytester.path / "pages"))
+    kinds = [test.split("::")[1].split("[")[0] for test in tests]
+    assert kinds == ["test_renders"] * 2 + ["test_matches_reference"] * 2 + ["test_matches_baseline"] * 2
+
+
 def test_keeps_local_paths(pytester):
     pytester.mkdir("ime")
     (pytester.path / "ime" / "test_local.py").write_text("def test_local(): pass\n")

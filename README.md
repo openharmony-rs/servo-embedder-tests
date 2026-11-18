@@ -153,7 +153,8 @@ The page is rendered once per engine for all three. Known differences between en
 `test_matches_reference`, so that they don't hide regressions. The captures of each engine are kept in
 `--baselines` under `<device>/<engine>/<scenario>/`; the device is its model, or `--reference-key`. The reference
 engine's captures are expectations like the baselines: with them stored, a run doesn't need the reference engine. It
-renders the missing ones if it has the engine, and `--update-references` renders all anew.
+renders the missing ones if it has the engine, and `--update-references` renders all anew. The engine comparisons
+run before the regression checks, so that references rendered in the run judge the changes too.
 
 A capture is a screenshot of the web view, taken by the OS the same way for every engine. It's taken after:
 
