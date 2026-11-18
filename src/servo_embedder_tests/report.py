@@ -26,6 +26,7 @@ from __future__ import annotations
 import base64
 import datetime
 import functools
+import hashlib
 import io
 import json
 import re
@@ -133,6 +134,7 @@ figure { margin: 0; min-width: 0; max-width: 100%; }
 figcaption { font-size: 12px; margin-top: 3px; }
 .shot { position: relative; line-height: 0; border: 1px solid var(--line); max-width: 100%; }
 .shot img { width: 100%; height: auto; }
+.pic { display: block; width: 100%; background-size: 100% 100%; }
 .flip .top { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .flip:hover .top { visibility: hidden; }
 .box { position: absolute; border: 2px solid var(--box); box-sizing: border-box; }
@@ -359,12 +361,11 @@ def _verdict(baseline: Result | None, report: dict, sides: dict[str, Side]) -> V
     return Verdict("error", f"The regression check ended {baseline.status}{message}")
 
 
-def _shot(images: list[tuple[str, str]], width: float, boxes: str, caption: str) -> str:
-    """A capture image, or two that flip on hover, with the region boxes over it."""
-    flip = len(images) > 1
+def _shot(images: Images, stack: list[tuple[str, str]], width: float, boxes: str, caption: str) -> str:
+    """A capture image, or two that flip on hover, `stack` of (path, alt), with the region boxes over it."""
+    flip = len(stack) > 1
     tags = "".join(
-        f'<img src="{escape(src)}" alt="{escape(alt)}"{" class=top" if flip and index else ""}>'
-        for index, (src, alt) in enumerate(images)
+        images.img(path, alt, width, "top" if flip and index else "") for index, (path, alt) in enumerate(stack)
     )
     return (
         f'<figure><div class="shot{" flip" if flip else ""}" style="max-width: {width:g}px">{tags}{boxes}</div>'
@@ -381,12 +382,15 @@ def _open(path: Path) -> Image.Image:
 class Images:
     """How the report refers to the images in the artifacts folder `root`: by their paths, or, `inline`, as data URIs,
     so that the report is one file to share. Inlined, full captures have one pixel per CSS pixel and crops up to twice
-    the pixels they are shown with, in WebP of INLINE_QUALITY: on 8 GenUI pages, 15 MB instead of 106 MB of PNGs."""
+    the pixels they are shown with, in WebP of INLINE_QUALITY. Each image is inlined once, as the background of a CSS
+    class (`css`) that every element showing it has."""
 
     def __init__(self, root: Path, inline: bool = False) -> None:
         self.root = root
         self.inline = inline
-        self._uris: dict[tuple[str, int | None], str] = {}
+        # The CSS class and size of each inlined image, and the rules that give the classes their images.
+        self._classes: dict[tuple[str, int | None], tuple[str, int, int]] = {}
+        self._rules: list[str] = []
 
     @staticmethod
     def _uri(image: Image.Image) -> str:
@@ -396,17 +400,30 @@ class Images:
         kind = "webp" if webp else "jpeg"
         return f"data:image/{kind};base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
 
-    def src(self, path: str, width: float | None = None) -> str:
-        """What an `<img src>` names for `path`, relative to `root`, an image shown at most `width` CSS px wide."""
+    def img(self, path: str, alt: str, width: float | None = None, classes: str = "", style: str = "") -> str:
+        """An element showing the image `path`, relative to `root`, at most `width` CSS px wide, with `alt` as its
+        text."""
         if not self.inline:
-            return path
-        key = (path, None if width is None else round(width))
-        if key not in self._uris:
+            extra = (f' class="{classes}"' if classes else "") + (f' style="{style}"' if style else "")
+            return f'<img src="{escape(path)}" alt="{escape(alt)}"{extra}>'
+        # By content: each comparison writes its own copy of the actual capture.
+        key = (hashlib.sha256((self.root / path).read_bytes()).hexdigest(), None if width is None else round(width))
+        if key not in self._classes:
             image = _open(self.root / path)
             if width is not None and image.width > width:
                 image = image.resize((round(width), max(1, round(width * image.height / image.width))), Image.LANCZOS)
-            self._uris[key] = self._uri(image)
-        return self._uris[key]
+            name = f"i{len(self._classes)}"
+            self._classes[key] = (name, image.width, image.height)
+            self._rules.append(f'.{name} {{ background-image: url("{self._uri(image)}"); }}')
+        name, pixels_wide, pixels_high = self._classes[key]
+        return (
+            f'<span role="img" aria-label="{escape(alt)}" class="pic {name} {classes}" '
+            f'style="aspect-ratio: {pixels_wide} / {pixels_high}; {style}"></span>'
+        )
+
+    def css(self) -> str:
+        """The rules that give the inlined images to the elements showing them."""
+        return "\n".join(self._rules)
 
     def part(self, path: str, box: tuple[float, float, float, float], size: list, shown: float) -> str:
         """An `<img>` of the part `box`, in CSS px of the `size` the image `path` shows, `shown` CSS px wide."""
@@ -475,7 +492,7 @@ def _capture(
         title += f"<p class=muted>{escape(reference)}: {escape(common)}</p>"
     if not files:
         compare = entry.get("compare")
-        return title + (f'<img src="{escape(images.src(f"{folder.name}/{compare}"))}" alt="">' if compare else "")
+        return title + (images.img(f"{folder.name}/{compare}", "compared captures") if compare else "")
     base = f"{folder.name}/"
     width, height = entry["size"]
     offset = entry["offset"]
@@ -494,14 +511,13 @@ def _capture(
     differing = Side("changed", changes, "")
     shots = []
     for side, key in panels:
-        stack = [(images.src(base + files[key], width), side.name)]
+        stack = [(base + files[key], side.name)]
         caption = side.label()
         if side.role == "new":
-            stack = [(images.src(base + files[first[1]], width), first[0].name), *stack]
+            stack = [(base + files[first[1]], first[0].name), *stack]
             caption = side.label(f" <span class=muted>(hover: {escape(first[0].name)})</span>")
-        shots.append(_shot(stack, width, boxes, caption))
-    differing_src = images.src(base + files["differing"], width)
-    shots.append(_shot([(differing_src, changes)], width, boxes, differing.label()))
+        shots.append(_shot(images, stack, width, boxes, caption))
+    shots.append(_shot(images, [(base + files["differing"], changes)], width, boxes, differing.label()))
     items = []
     for index, region in shown:
         crop_id = Path(region["crop"]).stem
@@ -650,9 +666,7 @@ def _rendering(images: Images, folder: Path, data: dict) -> str:
     )
     failure = folder / "failure.png"
     shot = (
-        f'<img src="{escape(images.src(f"{folder.name}/failure.png", 360))}" alt="failure" style="max-width: 360px">'
-        if failure.is_file()
-        else ""
+        images.img(f"{folder.name}/failure.png", "failure", 360, style="max-width: 360px") if failure.is_file() else ""
     )
     return "<p class=muted>" + "<br>".join(lines) + "</p>" + origins + shot
 
@@ -833,7 +847,7 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
         return (
             "<!DOCTYPE html>\n<html lang=en><head><meta charset=utf-8>"
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
+            f"<title>Page scenario report</title><style>{STYLE}{images.css()}</style></head><body>"
             f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
             f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
             f"{_legend(list(sides.values()), checked, judged)}{tally}{triage}"
