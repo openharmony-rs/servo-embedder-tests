@@ -141,6 +141,42 @@ def test_content_a_few_pixels_from_the_reference_s_is_closer_than_none(tmp_path)
     assert [region.toward_reference for region in back.regions] == ["further"]
 
 
+def test_content_at_the_edge_of_a_capture_is_looked_for_beyond_it(tmp_path):
+    old = _page(tmp_path / "old.png")
+    with Image.open(old.path) as image:
+        ImageDraw.Draw(image).rectangle((0, 0, image.width, 55 * 1.5), fill="white")
+        image.save(old.path)
+    new, reference = _page(tmp_path / "new.png", shift=4), _page(tmp_path / "ref.png")
+    for shot in (old, new, reference):
+        with Image.open(shot.path) as image:
+            image.crop((0, 17 * 1.5, image.width, 617 * 1.5)).save(shot.path)
+    old, new, reference = (replace(shot, size=(480, 600)) for shot in (old, new, reference))
+    diff = diffing.compare(old, new, BASELINE)
+    assert diff.regions[0].box[1] == 0
+    diffing.reference_hint(old, new, reference, diff.regions)
+    assert [region.toward_reference for region in diff.regions] == ["closer"]
+
+
+def test_masked_parts_do_not_count_toward_the_reference(tmp_path):
+    clock = (120, 28, 360, 72)
+    shots = []
+    for name, frame, seed in (("old", False, 1), ("new", True, 2), ("ref", True, 3)):
+        image = Image.new("RGB", (720, 600), "white")
+        draw = ImageDraw.Draw(image)
+        if frame:
+            draw.rectangle((24, 24, 696, 120), outline=(30, 30, 30), width=3)
+        rng = random.Random(seed)
+        for _ in range(300):
+            x, y = rng.uniform(clock[0], clock[2] - 10) * 1.5, rng.uniform(clock[1], clock[3] - 10) * 1.5
+            draw.rectangle((x, y, x + 15, y + 15), fill=(rng.randrange(256), 0, rng.randrange(256)))
+        image.save(tmp_path / f"{name}.png")
+        shots.append(Shot(tmp_path / f"{name}.png", (480, 400), 0, (clock,)))
+    old, new, reference = shots
+    diff = diffing.compare(old, new, BASELINE)
+    diffing.reference_hint(old, new, reference, diff.regions)
+    assert diff.regions[0].toward_reference == "closer" and diff.regions[0].reference.endswith(" -> 0.0)")
+
+
 def test_renderings_of_other_widths_are_not_compared(tmp_path):
     old, new = _page(tmp_path / "old.png"), _page(tmp_path / "new.png", bold_heading=True)
     diff = diffing.compare(old, new, BASELINE)
