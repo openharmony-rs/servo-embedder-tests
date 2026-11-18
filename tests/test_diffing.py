@@ -177,6 +177,32 @@ def test_masked_parts_do_not_count_toward_the_reference(tmp_path):
     assert diff.regions[0].toward_reference == "closer" and diff.regions[0].reference.endswith(" -> 0.0)")
 
 
+def _minor(a, b):
+    diff = diffing.compare(a, b, BASELINE)
+    diffing.mark_minor(a, b, diff, [diffing.measure(a, b, diff, region) for region in diff.regions])
+    return [region.minor for region in diff.regions]
+
+
+def test_changes_of_anti_aliasing_are_minor(tmp_path):
+    import cv2
+    import numpy as np
+
+    old = _page(tmp_path / "old.png")
+    image = cv2.imread(str(old.path))
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    edges = np.hypot(cv2.Sobel(gray, cv2.CV_32F, 1, 0), cv2.Sobel(gray, cv2.CV_32F, 0, 1)) > 60
+    other_gamma = (255 * (image / 255.0) ** 0.8).astype(np.uint8)
+    cv2.imwrite(str(tmp_path / "new.png"), np.where(edges[..., None], other_gamma, image))
+    minor = _minor(old, Shot(tmp_path / "new.png", SIZE))
+    assert minor and all(minor)
+
+
+def test_other_weights_and_moves_are_not_minor(tmp_path):
+    old = _page(tmp_path / "old.png")
+    assert _minor(old, _page(tmp_path / "bold.png", bold_heading=True)) == [False]
+    assert not any(_minor(old, _page(tmp_path / "moved.png", shift=1)))
+
+
 def test_renderings_of_other_widths_are_not_compared(tmp_path):
     old, new = _page(tmp_path / "old.png"), _page(tmp_path / "new.png", bold_heading=True)
     diff = diffing.compare(old, new, BASELINE)

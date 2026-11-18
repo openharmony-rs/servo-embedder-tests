@@ -33,7 +33,13 @@ For each capture, `diff.json` gives:
   `font_style` and `color`, and paint properties when set: `background_clip` ("text": text filled with its
   background, usually with a transparent `color`), `background_image`, `clip_path`, `mask`, `filter`, `opacity`.
   Elements without text are listed when they have one of those, e.g. a card cut by a `clip_path`.
-- **`reading`** of the largest regions, from pixel measurements (`measured`: the offset that best aligns the two
+- **`minor`** (baseline tests): the change is anti-aliasing or sub-pixel positions only. It vanishes when the two
+  captures are compared at CSS px resolution with a tolerance above what engines differ by, lies on edges both
+  captures have, didn't move by a device pixel or more and changed no colour, as when text is rasterized with another
+  gamma. Report minor regions as minor, e.g. "3 regions with slightly different anti-aliasing", rather than as
+  regressions; the report leaves them out of a page's verdict.
+- **`reading`** of the regions (of baseline tests all, else the largest), from pixel measurements (`measured`: the
+  offset that best aligns the two
   renderings, the ink of the actual one relative to the expected one, the width of the ink). Trust it, it settles
   most cases without looking:
   - "moved by (dx, dy) CSS px, otherwise nearly the same": a layout shift;
@@ -72,7 +78,7 @@ Also check:
   the element's area.
 - Two renderings of the same build normally match exactly, so in a baseline test every reading is a real change,
   however small: "moved by 1 px" is a layout shift to report, not noise. Only "only edge pixels differ" in a region of
-  a few pixels, e.g. at an image edge, is noise.
+  a few pixels, e.g. at an image edge, is noise; regions marked `minor` are slight rasterization changes.
 
 ## 3. Ask an image model only for what's left
 

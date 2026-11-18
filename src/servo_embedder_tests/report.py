@@ -59,6 +59,7 @@ VERDICTS = {
     "unclear": "Changed, unclear",
     "unjudged": "Changed, not judged",
     "improvement": "Likely improvement",
+    "minor": "Minor changes",
     "new": "No baseline",
     "stored": "Baseline stored",
     "unchanged": "Unchanged",
@@ -128,6 +129,8 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
   border: 1px solid transparent; }
 .t-closer { background: var(--better); color: #fff; } .t-further { background: var(--worse); color: #fff; }
 .t-same { background: var(--neutral); color: #fff; } .t-none { border-color: var(--neutral); color: var(--muted); }
+.t-minor { border-color: var(--line); color: var(--muted); }
+.v-minor { border-color: var(--line); color: var(--muted); }
 .shots { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   align-items: start; }
 figure { margin: 0; min-width: 0; max-width: 100%; }
@@ -138,11 +141,13 @@ figcaption { font-size: 12px; margin-top: 3px; }
 .flip .top { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 .flip:hover .top { visibility: hidden; }
 .box { position: absolute; border: 2px solid var(--box); box-sizing: border-box; }
+.box.minor { border-style: dashed; opacity: 0.5; }
 .box span { position: absolute; top: -2px; left: -2px; padding: 2px 4px; background: var(--box); color: #fff;
   font: 600 11px/1 system-ui, sans-serif; }
 #boxes:not(:checked) ~ main .box { display: none; }
 .regions { list-style: none; padding: 0; display: grid; gap: 12px; }
 .regions > li { background: var(--card); border-radius: 6px; padding: 8px 10px; min-width: 0; }
+.regions > li.minor-regions { background: none; padding: 0; }
 .region-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
 .crops { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; align-items: flex-start; }
 .crops.stacked { flex-direction: column; }
@@ -308,10 +313,18 @@ def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
         return Verdict("unclear", "; ".join(f"{name}: {entry.get('summary')}" for name, entry in changed.items()))
     if report.get("description_error"):
         return Verdict("unjudged", f"{where}; describing them failed: {report['description_error']}")
+    # Minor changes, anti-aliasing or sub-pixel positions, are left out of the judgement.
+    minor = sum(1 for region in regions if region.get("minor"))
+    if minor == len(regions):
+        return Verdict("minor", f"{where}, all minor: anti-aliasing or sub-pixel positions")
+    regions = [region for region in regions if not region.get("minor")]
+    also = f"; {minor} more minor" if minor else ""
     if "ref" not in sides:
         if any(region.get("reference") for region in regions) and not any("toward_reference" in r for r in regions):
-            return Verdict("unjudged", f"{where}; compared by an earlier version, which didn't judge them this way")
-        return Verdict("unjudged", f"{where}; no reference rendering stored to judge them by")
+            return Verdict(
+                "unjudged", f"{where}; compared by an earlier version, which didn't judge them this way{also}"
+            )
+        return Verdict("unjudged", f"{where}; no reference rendering stored to judge them by{also}")
     reference = sides["ref"].name
     pixels = {"closer": 0, "further": 0, "same": 0, None: 0}
     counts = dict.fromkeys(pixels, 0)
@@ -330,6 +343,8 @@ def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
         )
         if counts[toward]
     ]
+    if minor:
+        parts.append(f"{minor} minor")
     why = f"{where}: {', '.join(parts)}"
     further, closer = (total and pixels[toward] >= VERDICT_SHARE * total for toward in ("further", "closer"))
     if further and closer:
@@ -340,7 +355,7 @@ def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
         return Verdict("improvement", why)
     if not counts["same"] and not counts["further"] and not counts["closer"]:
         reason = next((str(region["reference"]) for region in regions if region.get("reference")), "")
-        return Verdict("unjudged", f"{where}; {reason or f'{reference} was not compared'}")
+        return Verdict("unjudged", f"{where}; {reason or f'{reference} was not compared'}{also}")
     return Verdict("unclear", f"{why}; too little of the change moved toward {reference} or away from it to tell")
 
 
@@ -477,17 +492,20 @@ def _capture(
     shown = [(index, region) for index, region in enumerate(regions) if region.get("crop")]
     reference = judged_by.name if judged_by else ""
     summary = str(entry.get("summary", ""))
-    towards = [_toward(region) for region in regions]
+    major = [region for region in regions if not region.get("minor")]
+    towards = [_toward(region) for region in major]
     if regions:
         summary = f"{len(regions)} {'changed' if panels[0][0].role == 'old' else 'differing'} region(s)"
         words = {"further": f"further from {reference}", "closer": f"closer to {reference}", "same": "as far as before"}
-        judged = [f"{towards.count(toward)} {words[toward]}" for toward in words if toward in towards]
-        if judged_by is not None and judged:
-            summary += ": " + ", ".join(judged)
+        parts = [f"{towards.count(toward)} {words[toward]}" for toward in words if toward in towards and judged_by]
+        if len(major) < len(regions):
+            parts.append(f"{len(regions) - len(major)} minor")
+        if parts:
+            summary += ": " + ", ".join(parts)
     title = f"<h4>{escape(name)} <span class=muted>· {escape(summary)}</span></h4>"
     # Why none of the regions could be judged, such as viewports of other widths, goes here once.
-    reasons = {str(region.get("reference") or "") for region in regions}
-    common = reasons.pop() if judged_by is not None and regions and not any(towards) and len(reasons) == 1 else ""
+    reasons = {str(region.get("reference") or "") for region in major}
+    common = reasons.pop() if judged_by is not None and major and not any(towards) and len(reasons) == 1 else ""
     if common:
         title += f"<p class=muted>{escape(reference)}: {escape(common)}</p>"
     if not files:
@@ -505,7 +523,8 @@ def _capture(
             f"width: {100 * (right - left) / width:.2f}%; height: {100 * (bottom - top) / height:.2f}%"
         )
         target = f"{escape(prefix)}-{escape(name)}-{index}"
-        boxes += f'<a class="box" href="#{target}" style="{style}"><span>{index + 1}</span></a>'
+        kind = "box minor" if region.get("minor") else "box"
+        boxes += f'<a class="{kind}" href="#{target}" style="{style}"><span>{index + 1}</span></a>'
     first, *_ = panels
     changes = "Changed pixels" if judged_by is not None or first[0].role == "old" else "Differing pixels"
     differing = Side("changed", changes, "")
@@ -518,7 +537,7 @@ def _capture(
             caption = side.label(f" <span class=muted>(hover: {escape(first[0].name)})</span>")
         shots.append(_shot(images, stack, width, boxes, caption))
     shots.append(_shot(images, [(base + files["differing"], changes)], width, boxes, differing.label()))
-    items = []
+    items, minor_items = [], []
     for index, region in shown:
         crop_id = Path(region["crop"]).stem
         left, top, right, bottom = region["box"]
@@ -550,8 +569,10 @@ def _capture(
         if crop_id in notes:
             facts.append(("Agent", escape(str(notes[crop_id]))))
         chip = _toward_chip(region, reference) if judged_by is not None else ""
+        if region.get("minor"):
+            chip = '<span class="toward t-minor">Minor</span>'
         where = f"({round(left)}, {round(top + offset)})-({round(right)}, {round(bottom + offset)}) CSS px"
-        items.append(
+        (minor_items if region.get("minor") else items).append(
             f'<li id="{escape(prefix)}-{escape(name)}-{index}"><div class="region-head">'
             f'<span class="badge">{index + 1}</span>'
             f"{chip}<span class=muted>{where}, {region['differing']} px differ, "
@@ -559,22 +580,18 @@ def _capture(
             f'<div class="crops{" stacked" if stacked else ""}">{"".join(crops)}</div>'
             "<dl>" + "".join(f"<dt>{escape(key)}</dt><dd>{value}</dd>" for key, value in facts) + "</dl></li>"
         )
-    rest = len(regions) - len(shown)
+    rest = [region for region in regions if not region.get("crop")]
     more = ""
     if rest:
-        tally = ""
-        if judged_by is not None:
-            rest_toward = [_toward(region) for region in regions if not region.get("crop")]
-            tally = (
-                " ("
-                + ", ".join(
-                    f"{rest_toward.count(toward)} {toward}"
-                    for toward in ("further", "closer", "same")
-                    if toward in rest_toward
-                )
-                + ")"
-            )
-        more = f"<p class=muted>{rest} smaller region(s){tally} are outlined in the differing pixels only.</p>"
+        kinds = ["minor" if region.get("minor") else _toward(region) if judged_by else None for region in rest]
+        counted = [f"{kinds.count(kind)} {kind}" for kind in ("further", "closer", "same", "minor") if kind in kinds]
+        tally = f" ({', '.join(counted)})" if counted else ""
+        more = f"<p class=muted>{len(rest)} smaller region(s){tally} are outlined in the differing pixels only.</p>"
+    if minor_items:
+        items.append(
+            f'<li class="minor-regions"><details><summary>{len(minor_items)} minor region(s): anti-aliasing or '
+            f'sub-pixel positions</summary><ol class="regions">{"".join(minor_items)}</ol></details></li>'
+        )
     dom_changes = entry.get("dom_changes", [])
     dom = (
         f"<details><summary>{len(dom_changes)} DOM change(s)</summary><ul>"

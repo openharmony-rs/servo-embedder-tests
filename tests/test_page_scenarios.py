@@ -386,6 +386,36 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
 
 
+def test_a_page_that_changed_only_in_anti_aliasing_has_minor_changes(tmp_path):
+    import cv2
+    import numpy as np
+
+    artifacts = tmp_path / "artifacts"
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old"))
+    rendering = _rendering(tmp_path / "new")
+    image = cv2.imread(str(rendering.captures["page-0"].image))
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    edges = np.hypot(cv2.Sobel(gray, cv2.CV_32F, 1, 0), cv2.Sobel(gray, cv2.CV_32F, 0, 1)) > 60
+    other_gamma = (255 * (image / 255.0) ** 0.8).astype(np.uint8)
+    cv2.imwrite(str(rendering.captures["page-0"].image), np.where(edges[..., None], other_gamma, image))
+    key = f"{cli.BASELINE_TEST}menu]"
+    folder = artifacts / "baseline-menu"
+    folder.mkdir(parents=True)
+    (folder / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+    changed = compare_captures(store.captures("menu"), rendering, store_preset(), folder, ("baseline", "servoshell"))
+    assert not changed.matches
+    regions = json.loads((folder / "diff.json").read_text())["captures"]["page-0"]["regions"]
+    assert regions and all(region["minor"] for region in regions)
+    result = {"key": key, "status": "FAIL", "expected": ["PASS"], "message": "1 capture(s) differ"}
+    (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": {key: result}}))
+    assert cli.main(["report", str(artifacts)]) == 0
+    page = (artifacts / "report.html").read_text()
+    assert '<span class="verdict v-minor">Minor changes</span>' in page
+    assert "all minor: anti-aliasing or sub-pixel positions." in page
+    assert 'class="box minor"' in page and "minor region(s): anti-aliasing or sub-pixel positions</summary>" in page
+
+
 def test_the_report_says_what_regression_checks_that_compared_nothing_did(tmp_path):
     artifacts = tmp_path / "artifacts"
     store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")

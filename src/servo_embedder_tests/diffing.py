@@ -99,6 +99,16 @@ class Preset:
 BASELINE = Preset(tolerance=12, tile=16, tile_share=0.05, css=False)
 # Different engines: anti-aliasing and rasterization differ everywhere, so only clear differences count.
 REFERENCE = Preset(tolerance=48, tile=16, tile_share=0.05, css=True)
+# A change is minor, anti-aliasing or sub-pixel positions, when comparing the two captures in CSS px with
+# MINOR_TOLERANCE finds nothing there, most of its differing pixels lie on edges both captures have, it didn't move
+# by MINOR_MOVE device px or more and no colour changed. On GenUI pages on a DAYU200 (2026-11-18), that made minor
+# 99% of the changed pixels of another text gamma or of whole captures moved by a quarter device pixel, 57% of edges
+# blurred by 0.6 device px; none of 64 injected changes (hidden, resized, refonted, recoloured, spaced, shifted by a
+# device pixel or more, underlined) and 18 of 178 regions, under 1% of the changed pixels, of pages with features
+# turned off. A tolerance of 48 made as few changes minor that shouldn't be, but only 41% and 28% of the moved and
+# blurred captures.
+MINOR_TOLERANCE = 64
+MINOR_MOVE = 0.75
 
 
 @dataclass
@@ -115,6 +125,8 @@ class Region:
     # "same"; None where they can't be compared. `reference` says it in words, with why where they can't.
     reference: str | None = None
     toward_reference: str | None = None
+    # Whether the change is minor: anti-aliasing or sub-pixel positions (see `mark_minor`).
+    minor: bool = False
     crop: str | None = None
     # Pixel measurements (see `measure`) and what they mean.
     measured: dict[str, object] | None = None
@@ -697,6 +709,19 @@ def measure(expected: Shot, actual: Shot, diff: Diff, region: Region) -> Measure
     )
 
 
+def mark_minor(expected: Shot, actual: Shot, diff: Diff, measurements: Sequence[Measurement]) -> None:
+    """Marks the regions of `diff`, a comparison of `expected` and `actual`, that are minor (see MINOR_TOLERANCE), from
+    the `measurements` of each."""
+    coarse = compare(expected, actual, REFERENCE.updated({"tolerance": MINOR_TOLERANCE}))
+    for region, measurement in zip(diff.regions, measurements, strict=True):
+        left, top, right, bottom = region.box
+        if any(left < r.box[2] and right > r.box[0] and top < r.box[3] and bottom > r.box[1] for r in coarse.regions):
+            continue
+        moved = measurement.moved and max(map(abs, measurement.offset)) * diff.scale >= MINOR_MOVE
+        edges = measurement.on_edges is None or measurement.on_edges >= 0.5
+        region.minor = edges and not moved and not measurement.colours
+
+
 @dataclass(frozen=True)
 class Measurement:
     """How a region differs: `offset`, in CSS px, best aligns the actual rendering onto the expected one, with mean
@@ -715,6 +740,12 @@ class Measurement:
     on_edges: float | None = None
     colours: tuple[tuple[str, str, float], ...] = ()
 
+    @property
+    def moved(self) -> bool:
+        """Whether the actual rendering is nearly the expected one moved by `offset`."""
+        aligned, unshifted = self.difference_aligned, self.difference_unshifted
+        return bool(self.offset[0] or self.offset[1]) and aligned <= 8 and aligned <= 0.5 * unshifted
+
     def reading(self, text: bool = True) -> str:
         """What the measurements mean, in words, for an agent that can't see the crops. Without `text` in the region,
         the width of the ink, e.g. of a textured background, says nothing about spacing or glyphs, and is left out."""
@@ -722,7 +753,7 @@ class Measurement:
         aligned, unshifted, ink = self.difference_aligned, self.difference_unshifted, self.ink
         before, after = self.ink_width
         parts = []
-        moved = bool(dx or dy) and aligned <= 8 and aligned <= 0.5 * unshifted
+        moved = self.moved
         if moved:
             parts.append(f"moved by ({dx:+g}, {dy:+g}) CSS px, otherwise nearly the same")
         elif unshifted < 3 and (self.on_edges is None or self.on_edges >= 0.5):
