@@ -83,8 +83,10 @@ def _image_url(path: Path, max_width: int) -> str:
 
 
 def explained(region: dict) -> bool:
-    """Whether the measurements alone explain the region: a shift, anti-aliasing, changed spacing or an image that
-    did not load."""
+    """Whether the measurements alone explain the region: a minor change, a shift, anti-aliasing, changed spacing or
+    an image that did not load."""
+    if region.get("minor"):
+        return True
     parts = (region.get("reading") or "").split("; ")
     if parts[0].startswith("image ") and " did not load in " in parts[0]:
         return True

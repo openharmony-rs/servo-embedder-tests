@@ -174,11 +174,14 @@ Each comparison test writes `diff.json` with, for each capture:
 
 - the differing regions in the actual capture's viewport, in CSS px;
 - the elements whose boxes best match each region, with their text, computed fonts and paint properties;
-- for the largest regions, a `reading` of pixel measurements: moved by how much, only anti-aliasing, wider with
-  the same ink (spacing), less or more ink (stroke weight, or content missing), shapes that differ even when
-  aligned, or a colour drawn in another colour (such as a colour emoji drawn black). It starts with the images in the
-  region that did not load, if any;
+- for the regions (of baselines all, else the largest), a `reading` of pixel measurements: moved by how much, only
+  anti-aliasing, wider with the same ink (spacing), less or more ink (stroke weight, or content missing), shapes that
+  differ even when aligned, or a colour drawn in another colour (such as a colour emoji drawn black). It starts with
+  the images in the region that did not load, if any;
 - `dom_changes`, the elements whose text, box, style or image load state changed;
+- for baselines, whether a region's change is `minor`: anti-aliasing or sub-pixel positions only, as when text is
+  rasterized with another gamma. It vanishes when the captures are compared in CSS px with a tolerance above what
+  engines differ by, lies on edges both captures have, didn't move by a device pixel or more and changed no colour;
 - for baselines, with the reference engine's captures stored, whether each region moved closer to the reference
   engine's rendering or further from it (`toward_reference`: closer, further or same), a hint whether a change is an
   improvement. Each rendering's part of the region is looked for in the other's within 24 CSS px, so that content the
@@ -196,7 +199,8 @@ run goes on to the next test; `diff.json` and the images are complete when the r
 
 For people, a run writes `report.html` to the artifacts folder. It starts with each page's verdict: unchanged since
 its baseline, or, where it changed, a likely regression or improvement by whether the changes took it away from the
-reference engine's rendering or toward it, mixed, or unclear. For each changed capture it shows the old rendering,
+reference engine's rendering or toward it, mixed, or unclear. Minor changes are shown, with dashed boxes and folded
+away, but left out of the verdict; a page that changed only in them has minor changes. For each changed capture it shows the old rendering,
 the new one (hover it to see the old one in its place), the reference engine's and the changed pixels, then each
 region numbered with its verdict, the renderings of it side by side and enlarged, its readings and the DOM changes.
 The engine comparison, the gaps that remain to the reference engine, is folded away below; without baselines, it is

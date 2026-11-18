@@ -7,6 +7,9 @@
   rendering or away from it. Changed captures and their regions show the old rendering, the new one and the
   reference's side by side; the engine comparison is folded away where there is a baseline. Renderings are named
   after their engine and role, e.g. Old Servo, New Servo and ArkWeb, with their builds.
+- Changes of baselines that are only anti-aliasing or sub-pixel positions are `minor` in `diff.json`; the report shows
+  them folded away and leaves them out of a page's verdict. Baseline tests measure all differing regions for it, not
+  only the largest eight.
 - `run --standalone-report` and `report --standalone` also write `report-standalone.html`, the report with its images
   inlined, one file to share instead of the artifacts folder.
 - Whether a change moved toward the reference engine's rendering allows for content laid out up to 24 CSS px apart

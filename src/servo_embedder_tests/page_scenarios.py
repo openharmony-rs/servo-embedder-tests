@@ -788,12 +788,21 @@ class Description:
             broken = [element for element in elements if element.get("image") == "broken"]
             for region in diff.regions:
                 region.elements = diffing.elements_in(elements, region.box)
-            for region in diff.regions[: diffing.MAX_CROPS]:
+            # Comparisons of the same engine's captures, at their resolution, tell minor changes apart, from the
+            # measurements of all regions; between engines, everything differs in anti-aliasing.
+            minor = not diff.preset.css
+            measurements = []
+            for region in diff.regions if minor else diff.regions[: diffing.MAX_CROPS]:
                 measurement = diffing.measure(stored.shot, actual.shot, diff, region)
+                measurements.append(measurement)
                 region.measured = asdict(measurement)
                 region.reading = measurement.reading(text=any(element.get("text") for element in region.elements))
+            if minor:
+                diffing.mark_minor(stored.shot, actual.shot, diff, measurements)
+            for region in diff.regions[: len(measurements)]:
                 missing = sorted({str(element["src"]) for element in diffing.elements_in(broken, region.box, 3)})
                 if missing:
+                    region.minor = False
                     region.reading = f"image {', '.join(missing)} did not load in {self.labels[1]}; {region.reading}"
             reference = self.reference[name].shot if self.reference and name in self.reference else None
             if reference is not None:
