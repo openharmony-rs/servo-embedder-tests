@@ -536,6 +536,26 @@ def test_stored_references_come_with_where_they_came_from(tmp_path):
     assert runs.stored_reference(cast(Scenario, SimpleNamespace(name="order"))) == ({}, {})
 
 
+def test_references_rendered_in_the_run_judge_the_regression_checks(tmp_path):
+    def render(engine, scenario, directory):
+        return _rendering(directory, engine="arkweb", heading="Menu!")
+
+    runs = PageRuns(
+        {"servoshell": cast(Engine, None), "arkweb": cast(Engine, None)},
+        "servoshell",
+        "arkweb",
+        cast(Renderer, SimpleNamespace(render=render)),
+        tmp_path / "baselines",
+        "rk3568",
+        lambda name: tmp_path / name,
+    )
+    scenario = cast(Scenario, SimpleNamespace(name="menu"))
+    assert runs.stored_reference(scenario) == ({}, {})
+    rendered, _ = runs.reference_captures(scenario)
+    captures, origin = runs.stored_reference(scenario)
+    assert list(captures) == list(rendered) == ["page-0"] and origin["reason"] == "reference rendering"
+
+
 def test_accept_stores_the_failed_scenarios(tmp_path, capsys):
     artifacts = tmp_path / "artifacts"
     _rendering(artifacts / "page-scenarios_servoshell_menu", heading="New")
