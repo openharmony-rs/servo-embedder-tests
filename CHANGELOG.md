@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Whether a change moved toward the reference engine's rendering allows for content laid out up to 24 CSS px apart
+  and compares colours; before, a blank region counted as closer to the reference's text than text a few pixels off.
+  Regions in `diff.json` have `toward_reference` (closer, further, same or null), baseline tests record where the
+  reference came from as `reference` and write `<capture>-reference.png`. References with a viewport of another
+  width aren't compared.
+
 ## 0.2.0
 
 Changes that can need action:

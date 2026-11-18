@@ -122,9 +122,44 @@ def test_reference_hint_tells_whether_a_change_moved_toward_the_reference(tmp_pa
     old, new = _page(tmp_path / "old.png"), _page(tmp_path / "new.png", bold_heading=True)
     diff = diffing.compare(old, new, BASELINE)
     diffing.reference_hint(old, new, _page(tmp_path / "ref.png", bold_heading=True), diff.regions)
-    assert diff.regions[0].reference.startswith("closer")
+    assert diff.regions[0].reference.startswith("closer") and diff.regions[0].toward_reference == "closer"
     diffing.reference_hint(old, new, _page(tmp_path / "ref2.png"), diff.regions)
-    assert diff.regions[0].reference.startswith("further")
+    assert diff.regions[0].reference.startswith("further") and diff.regions[0].toward_reference == "further"
+
+
+def test_content_a_few_pixels_from_the_reference_s_is_closer_than_none(tmp_path):
+    old = _page(tmp_path / "old.png")
+    with Image.open(old.path) as image:
+        ImageDraw.Draw(image).rectangle((0, 0, image.width, 55 * 1.5), fill="white")
+        image.save(old.path)
+    new, reference = _page(tmp_path / "new.png", shift=4), _page(tmp_path / "ref.png")
+    diff = diffing.compare(old, new, BASELINE)
+    diffing.reference_hint(old, new, reference, diff.regions)
+    assert [region.toward_reference for region in diff.regions] == ["closer"]
+    back = diffing.compare(new, old, BASELINE)
+    diffing.reference_hint(new, old, reference, back.regions)
+    assert [region.toward_reference for region in back.regions] == ["further"]
+
+
+def test_renderings_of_other_widths_are_not_compared(tmp_path):
+    old, new = _page(tmp_path / "old.png"), _page(tmp_path / "new.png", bold_heading=True)
+    diff = diffing.compare(old, new, BASELINE)
+    wide = replace(_page(tmp_path / "ref.png", bold_heading=True), size=(1304, 3803))
+    diffing.reference_hint(old, new, wide, diff.regions)
+    assert diff.regions[0].toward_reference is None
+    assert diff.regions[0].reference.startswith("not comparable: the reference's viewport is 1304 CSS px wide")
+
+
+def test_the_reference_s_view_of_the_compared_part(tmp_path):
+    old, new = _page(tmp_path / "old.png"), _page(tmp_path / "new.png", bold_heading=True)
+    diff = diffing.compare(old, new, BASELINE, overlay=tmp_path / "overlay.png")
+    lower = replace(_page(tmp_path / "ref.png", scale=2, bold_heading=True), scroll=100)
+    images = diffing.write_review_images(
+        old, new, diff, tmp_path / "overlay.png", tmp_path, "page-0", ("old", "new"), lower
+    )
+    with Image.open(tmp_path / images["reference"]) as reference, Image.open(tmp_path / images["actual"]) as actual:
+        assert reference.size == actual.size
+        assert reference.getpixel((5, 5)) == (128, 128, 128) and reference.getpixel((5, 200)) == (255, 255, 255)
 
 
 def _measured(a, b):
