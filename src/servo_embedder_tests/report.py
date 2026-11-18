@@ -59,6 +59,7 @@ VERDICTS = {
     "unjudged": "Changed, not judged",
     "improvement": "Likely improvement",
     "new": "No baseline",
+    "stored": "Baseline stored",
     "unchanged": "Unchanged",
 }
 # Region crops are enlarged up to this factor, to at most this many CSS px; strips wider than WIDE times their height
@@ -67,8 +68,7 @@ CROP_ZOOM = 4
 CROP_SIZE = 340
 WIDE = 2.5
 CROP_MARGIN = 8
-# How diff.json files from before `toward_reference` put it in words, and the distances in it.
-TOWARD_PREFIXES = (("closer", "closer"), ("further", "further"), ("as far", "same"))
+# The distances to the reference in a region's `reference`.
 DISTANCES = re.compile(r"\(([\d.]+) -> ([\d.]+)\)$")
 # The share of a page's changed pixels whose regions must move toward the reference, or away from it, for its verdict
 # to say so; a few pixels that moved shouldn't make a page an improvement.
@@ -267,15 +267,12 @@ def _sides(test: str, report: dict) -> dict[str, Side]:
 
 def _toward(region: dict) -> str | None:
     """Whether a changed region moved "closer" to the reference's rendering, "further" or stayed the "same"."""
-    if "toward_reference" in region:
-        return region["toward_reference"]
-    text = str(region.get("reference") or "")  # older diff.json: the hint in words only
-    return next((toward for prefix, toward in TOWARD_PREFIXES if text.startswith(prefix)), None)
+    return region.get("toward_reference")
 
 
 def _toward_chip(region: dict, reference: str) -> str:
     toward = _toward(region)
-    titles = {"closer": f"Closer to {reference}", "further": f"Further from {reference}", "same": "No closer"}
+    titles = {"closer": f"Closer to {reference}", "further": f"Further from {reference}", "same": "As far as before"}
     title = titles.get(toward or "", "Not judged")
     chip = f'<span class="toward t-{toward or "none"}">{escape(title)}</span>'
     if match := DISTANCES.search(str(region.get("reference") or "")):
@@ -302,14 +299,16 @@ def _share(pixels: int, total: int) -> str:
 def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
     """The verdict on a regression check that found changes, from how its regions moved relative to the reference."""
     captures = report.get("captures", {})
-    changed = [entry for entry in captures.values() if not entry.get("matches")]
-    regions = [region for entry in changed for region in entry.get("regions", [])]
+    changed = {name: entry for name, entry in captures.items() if not entry.get("matches")}
+    regions = [region for entry in changed.values() for region in entry.get("regions", [])]
     where = f"{len(regions)} changed region(s) in {len(changed)} capture(s)"
     if not regions:
-        return Verdict("unclear", "; ".join(f"{name}: {entry.get('summary')}" for name, entry in captures.items()))
+        return Verdict("unclear", "; ".join(f"{name}: {entry.get('summary')}" for name, entry in changed.items()))
     if report.get("description_error"):
         return Verdict("unjudged", f"{where}; describing them failed: {report['description_error']}")
     if "ref" not in sides:
+        if any(region.get("reference") for region in regions) and not any("toward_reference" in r for r in regions):
+            return Verdict("unjudged", f"{where}; compared by an earlier version, which didn't judge them this way")
         return Verdict("unjudged", f"{where}; no reference rendering stored to judge them by")
     reference = sides["ref"].name
     pixels = {"closer": 0, "further": 0, "same": 0, None: 0}
@@ -324,7 +323,7 @@ def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
         for toward, words in (
             ("further", f"further from {reference}"),
             ("closer", f"closer to {reference}"),
-            ("same", "no closer"),
+            ("same", "as far as before"),
             (None, "not judged"),
         )
         if counts[toward]
@@ -344,18 +343,20 @@ def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
 
 
 def _verdict(baseline: Result | None, report: dict, sides: dict[str, Side]) -> Verdict | None:
-    """A page's verdict from its regression check; None if the run had none."""
-    if baseline is None and not report:
-        return None
-    if baseline is not None and baseline.status == "PASS":
-        return Verdict("unchanged", "renders as before, so there is nothing to judge")
-    if report.get("captures"):
+    """A page's verdict from its regression check, its result and `diff.json`; None if it had none."""
+    captures = report.get("captures", {})
+    if captures:
+        if all(entry.get("matches") for entry in captures.values()):
+            return Verdict("unchanged", "Renders as before, so there is nothing to judge")
         return _judge(report, sides)
-    message = baseline.message if baseline is not None else ""
-    if baseline is not None and baseline.status == "FAIL" and "no baseline in" in message:
-        return Verdict("new", "no baseline stored yet: only the engine comparison applies")
-    status = baseline.status if baseline is not None else "?"
-    return Verdict("error", f"the regression check ended {status}" + (f": {message}" if message else ""))
+    if baseline is None or baseline.status == "SKIP":
+        return None
+    if baseline.status == "PASS":
+        return Verdict("stored", "This run's rendering was stored as the baseline, so nothing was compared")
+    if baseline.status == "FAIL" and "no baseline in" in baseline.message:
+        return Verdict("new", "No baseline stored yet: only the engine comparison applies")
+    message = f": {baseline.message}" if baseline.message else ""
+    return Verdict("error", f"The regression check ended {baseline.status}{message}")
 
 
 def _shot(images: list[tuple[str, str]], width: float, boxes: str, caption: str) -> str:
@@ -462,7 +463,7 @@ def _capture(
     towards = [_toward(region) for region in regions]
     if regions:
         summary = f"{len(regions)} {'changed' if panels[0][0].role == 'old' else 'differing'} region(s)"
-        words = {"further": f"further from {reference}", "closer": f"closer to {reference}", "same": "no closer"}
+        words = {"further": f"further from {reference}", "closer": f"closer to {reference}", "same": "as far as before"}
         judged = [f"{towards.count(toward)} {words[toward]}" for toward in words if toward in towards]
         if judged_by is not None and judged:
             summary += ": " + ", ".join(judged)
@@ -486,7 +487,8 @@ def _capture(
             f"left: {100 * left / width:.2f}%; top: {100 * (top - offset) / height:.2f}%; "
             f"width: {100 * (right - left) / width:.2f}%; height: {100 * (bottom - top) / height:.2f}%"
         )
-        boxes += f'<a class="box" href="#{prefix}-{escape(name)}-{index}" style="{style}"><span>{index + 1}</span></a>'
+        target = f"{escape(prefix)}-{escape(name)}-{index}"
+        boxes += f'<a class="box" href="#{target}" style="{style}"><span>{index + 1}</span></a>'
     first, *_ = panels
     changes = "Changed pixels" if judged_by is not None or first[0].role == "old" else "Differing pixels"
     differing = Side("changed", changes, "")
@@ -534,11 +536,12 @@ def _capture(
         chip = _toward_chip(region, reference) if judged_by is not None else ""
         where = f"({round(left)}, {round(top + offset)})-({round(right)}, {round(bottom + offset)}) CSS px"
         items.append(
-            f'<li id="{prefix}-{escape(name)}-{index}"><div class="region-head"><span class="badge">{index + 1}</span>'
+            f'<li id="{escape(prefix)}-{escape(name)}-{index}"><div class="region-head">'
+            f'<span class="badge">{index + 1}</span>'
             f"{chip}<span class=muted>{where}, {region['differing']} px differ, "
             f"{images.link(base + region['crop'], f'<code>{escape(crop_id)}</code>')}</span></div>"
             f'<div class="crops{" stacked" if stacked else ""}">{"".join(crops)}</div>'
-            "<dl>" + "".join(f"<dt>{key}</dt><dd>{value}</dd>" for key, value in facts) + "</dl></li>"
+            "<dl>" + "".join(f"<dt>{escape(key)}</dt><dd>{value}</dd>" for key, value in facts) + "</dl></li>"
         )
     rest = len(regions) - len(shown)
     more = ""
@@ -654,8 +657,9 @@ def _rendering(images: Images, folder: Path, data: dict) -> str:
     return "<p class=muted>" + "<br>".join(lines) + "</p>" + origins + shot
 
 
-def _legend(sides: list[dict[str, Side]], checked: bool) -> str:
-    """What the report compares: each rendering with the builds and dates of the run, and how to read it."""
+def _legend(sides: list[dict[str, Side]], checked: bool, judged: bool) -> str:
+    """What the report compares: each rendering with the builds and dates of the run, and how to read it. `checked`:
+    the run had regression checks; `judged`: a reference judged their changes."""
     by_role: dict[str, list[Side]] = {}
     for found in sides:
         for side in found.values():
@@ -670,13 +674,21 @@ def _legend(sides: list[dict[str, Side]], checked: bool) -> str:
     )
     reference = names.get("ref", "the reference engine")
     new = names.get("new", "the engine")
-    if checked:
+    checks = (
+        f"Each page's rendering by {new} is compared with {names.get('old', 'its baseline')}'s. A page that renders "
+        "as before needs nothing more."
+    )
+    if checked and judged:
         how = (
-            f"Each page's rendering by {new} is compared with {names.get('old', 'its baseline')}'s. A page that "
-            f"renders as before needs nothing more. Where it changed, {reference}'s rendering judges each change: one "
-            f"that brings the page closer to {reference} is likely an improvement, one that takes it further away "
-            "likely a regression. The judgement compares pixels, allowing for content a few pixels apart, and is a "
-            "hint: check it against the pictures."
+            f"{checks} Where it changed, {reference}'s rendering judges each change: one that brings the page closer "
+            f"to {reference} is likely an improvement, one that takes it further away likely a regression. The "
+            "judgement compares pixels, allowing for content a few pixels apart, and is a hint: check it against the "
+            "pictures."
+        )
+    elif checked:
+        how = (
+            f"{checks} No reference engine's renderings were stored when the pages were compared, so their changes "
+            "aren't judged as improvements or regressions."
         )
     else:
         how = (
@@ -688,8 +700,8 @@ def _legend(sides: list[dict[str, Side]], checked: bool) -> str:
 
 def write_report(artifacts: Path, results_json: Path | None = None, standalone: bool = False) -> Path | None:
     """Writes `report.html` to `artifacts`, a run's artifacts folder, if page scenarios ran there, with the statuses
-    from `results_json` (default: the one in `artifacts`), and with `standalone` also `report-standalone.html`, which
-    has its images inlined. Returns the path of `report.html`."""
+    from `results_json` (default: the one in `artifacts`), and with `standalone`, or if it's there already, also
+    `report-standalone.html`, which has its images inlined. Returns the path of `report.html`."""
     results_json = results_json or artifacts / "results.json"
     tests: dict[tuple[str, str], Path] = {}
     for marker in artifacts.glob(f"*/{TEST_ARTIFACTS_MARKER}"):
@@ -709,10 +721,17 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
         if match and match.group(1) in TESTS:
             results[(match.group(2), match.group(1))] = result
     scenarios = sorted({scenario for scenario, _ in [*tests, *results]} | set(renderings))
-    kinds = [test for test in TESTS if any(kind == test for _, kind in [*tests, *results])]
-    checked = BASELINE in kinds
     diffs = {key: _load(folder / "diff.json") for key, folder in tests.items() if key[1] in (BASELINE, REFERENCE)}
+
+    def ran(key: tuple[str, str]) -> bool:
+        """Whether the test of `key`, (scenario, test), compared or rendered rather than being skipped."""
+        result = results.get(key)
+        return bool(diffs.get(key)) or (result is not None and result.status != "SKIP")
+
+    kinds = [test for test in TESTS if any(ran((scenario, test)) for scenario in scenarios)]
+    checked = BASELINE in kinds
     sides = {key: _sides(key[1], diff) for key, diff in diffs.items() if diff}
+    judged = any("ref" in found for (_, test), found in sides.items() if test == BASELINE)
     verdicts = {
         scenario: _verdict(
             results.get((scenario, BASELINE)),
@@ -770,7 +789,7 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
             verdict = verdicts[scenario]
             parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)} {verdict.chip if verdict else ""}</h2>']
             if verdict:
-                parts.append(f"<p class=why>{escape(verdict.why[:1].upper() + verdict.why[1:])}.</p>")
+                parts.append(f"<p class=why>{escape(verdict.why)}.</p>")
             found = renderings.get(scenario, [])
             parts += [_rendering(images, folder, data) for folder, data in found]
             renders = results.get((scenario, RENDERS))
@@ -779,21 +798,14 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
                 parts.append(f"<pre>{escape(renders.message)}</pre>")
             key = (scenario, BASELINE)
             found_sides = sides.get(key, {})
-            if key in tests or key in results:
-                if verdict is None or verdict.key != "unchanged":
-                    title = (
-                        f"{found_sides['old'].name} → {found_sides['new'].name}" if found_sides else "Regression check"
-                    )
-                    parts.append(
-                        f'<h3 id="{escape(scenario)}-baseline">{escape(title)} {_status(results.get(key))}</h3>'
-                    )
-                    parts.append(
-                        _comparison(
-                            images, f"{scenario}-baseline", BASELINE, tests.get(key), results.get(key), found_sides
-                        )
-                    )
+            if verdict is not None and verdict.key not in ("unchanged", "stored"):
+                title = f"{found_sides['old'].name} → {found_sides['new'].name}" if found_sides else "Regression check"
+                parts.append(f'<h3 id="{escape(scenario)}-baseline">{escape(title)} {_status(results.get(key))}</h3>')
+                parts.append(
+                    _comparison(images, f"{scenario}-baseline", BASELINE, tests.get(key), results.get(key), found_sides)
+                )
             key = (scenario, REFERENCE)
-            if key in tests or key in results:
+            if ran(key):
                 found_sides = sides.get(key, {})
                 title = (
                     f"{found_sides['new'].name} against {found_sides['ref'].name}"
@@ -824,14 +836,14 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
             f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
             f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
             f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
-            f"{_legend(list(sides.values()), checked)}{tally}{triage}"
+            f"{_legend(list(sides.values()), checked, judged)}{tally}{triage}"
             '<input type="checkbox" id="boxes" checked> <label for="boxes">Show region boxes</label>'
             f"<main>{summary}{''.join(sections)}</main></body></html>\n"
         )
 
     path = artifacts / REPORT
     path.write_text(render(Images(artifacts)), encoding="utf-8")
-    if standalone:
+    if standalone or (artifacts / STANDALONE).is_file():
         (artifacts / STANDALONE).write_text(render(Images(artifacts, inline=True)), encoding="utf-8")
         _open.cache_clear()
     return path

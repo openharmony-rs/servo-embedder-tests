@@ -57,7 +57,9 @@ For each capture, `diff.json` gives:
   Content the engines lay out a few CSS px apart still counts as matching, and a blank where the reference has
   content as far from it. The engines rasterize differently, so it's a hint, not a verdict. `null` with `reference`
   saying why: the region isn't in all three captures, or the viewports have other widths (then no region of the page
-  can be judged). `<capture>-reference.png` shows the reference's view of the compared part.
+  can be judged). Both are missing when no capture of the reference engine by that name was stored when the baseline
+  test ran, e.g. when the references were rendered in the same run. `<capture>-reference.png` shows the reference's
+  view of the compared part.
 - **`notes`**: viewport or scroll differences, and what part was compared.
 
 Also check:
