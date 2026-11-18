@@ -20,6 +20,7 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/openharmony-rs/servo-embedder-tests"
+Changelog = "https://github.com/openharmony-rs/servo-embedder-tests/blob/main/CHANGELOG.md"
 
 [project.scripts]
 servo-embedder-tests = "servo_embedder_tests.cli:main"
