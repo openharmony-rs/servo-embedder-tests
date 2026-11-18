@@ -17,7 +17,7 @@ from . import __version__, svg_cards
 from .expectations import Expectations, RunReport, update
 from .page_scenarios import Capture, CaptureStore, Rendering
 from .plugin import BUNDLED_SCENARIOS, SKILL
-from .report import write_report
+from .report import STANDALONE, write_report
 
 
 def _bundled(arg: str) -> str | None:
@@ -221,12 +221,17 @@ def _report(argv: Sequence[str]) -> int:
         description="Write the page scenario report of a run again, e.g. after an agent added its conclusions.",
     )
     parser.add_argument("artifacts", type=Path, help="the run's --artifacts folder")
+    parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help=f"also write {STANDALONE}, the report with its images inlined, one file to share",
+    )
     options = parser.parse_args(argv)
-    path = write_report(options.artifacts)
+    path = write_report(options.artifacts, standalone=options.standalone)
     if path is None:
         print(f"error: no page scenarios ran in {options.artifacts}")
         return 1
-    print(f"wrote {path}")
+    print(f"wrote {path}" + (f" and {path.with_name(STANDALONE)}" if options.standalone else ""))
     return 0
 
 
@@ -256,7 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "update-expectations": "rewrite expectations from results.json files",
         "accept": "store page scenario captures of a run as baselines: accept ARTIFACTS --baselines DIR",
         "skill": "print where the agent skill for triaging page scenarios is, or copy it: skill [FOLDER]",
-        "report": "write a run's page scenario report (report.html) again: report ARTIFACTS",
+        "report": "write a run's page scenario report (report.html) again: report ARTIFACTS [--standalone]",
         "svg-cards": "write the cards of the SVG test pages as page scenarios: svg-cards FOLDER",
         "record-dump": "record a mitmproxy dump of the network scenarios: record-dump PATH [run options]",
     }

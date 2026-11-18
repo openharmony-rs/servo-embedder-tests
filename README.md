@@ -204,6 +204,11 @@ all the report shows. Where an agent triaged the run, the report also shows the 
 conclusion (`triage.json` in the test's folder, see the skill), so that you can check them against the pictures.
 `servo-embedder-tests report <artifacts>` writes it again.
 
+The report shows the images in the artifacts folder, so it needs the folder. To share one file instead, pass
+`--standalone-report` to `run`, or `--standalone` to `report`: `report-standalone.html` has its images inlined, the
+full captures at one pixel per CSS pixel and the region crops sharper, in WebP. For 8 GenUI pages it is 15 MB, against
+106 MB of PNGs, and takes a few seconds more.
+
 `page-scenarios.toml` in the folder sets defaults for all scenarios, `scenario.toml` in a scenario's folder
 overrides them. Changes to the page are opt-in, under `[page]`:
 

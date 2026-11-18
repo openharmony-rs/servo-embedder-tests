@@ -363,6 +363,11 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     assert '<span class="verdict v-unchanged">Unchanged</span>' in page
     assert page.index('id="menu"') < page.index('id="order"')
     assert "<details><summary>2 resource(s) from other origins</summary>" in page
+    assert not (artifacts / "report-standalone.html").exists()
+    assert cli.main(["report", str(artifacts), "--standalone"]) == 0
+    standalone = (artifacts / "report-standalone.html").read_text()
+    assert standalone.count('src="data:image/') == page.count("<img ") and ".png" not in standalone
+    assert '<span class="toward t-closer">Closer to ArkWeb</span>' in standalone
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
 
 
