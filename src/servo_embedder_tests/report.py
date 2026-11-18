@@ -1,11 +1,17 @@
-"""The page scenario report: `report.html` in a run's artifacts folder, for people to see what differs.
+"""The page scenario report: `report.html` in a run's artifacts folder, for people to see what changed in each page's
+rendering and whether that is for the better.
 
-Per scenario it shows each differing capture next to what it was compared with, with the differing regions numbered,
-their enlarged crops and what the comparison measured. It tells the two kinds of comparison apart: a regression check
-(an engine against its own baselines, e.g. after an update) and an engine comparison (against another engine's
-renderings, its gaps). Where an agent triaged the run, it adds the image model's
-answers (`vision.json`, from the compare-renderings skill) and the agent's conclusion (`triage.json`), so that people
-can check them against the pictures:
+A run with baselines and a reference engine is a three-way comparison. The regression check compares the engine's new
+rendering of a page with its old one, the baseline: a page that renders as before needs nothing more. Where it
+changed, the reference engine's rendering, such as ArkWeb's, judges each changed region (`toward_reference` in
+`diff.json`): a change toward it is likely an improvement, one away from it likely a regression. Per page, the report
+gives that verdict first, then each changed capture as old | new | reference | changed pixels, with the regions
+numbered, cropped side by side and measured. The engine comparison, the new rendering against the reference's, shows
+the gaps that remain; it is folded away where there is a regression check. Without baselines, the engine comparison
+is all there is.
+
+Where an agent triaged the run, the report adds the image model's answers (`vision.json`, from the compare-renderings
+skill) and the agent's conclusion (`triage.json`), so that people can check them against the pictures:
 
     {"agent": "<who>", "verdict": "regression", "summary": "<text>", "regions": {"<capture>-<n>": "<text>"}}
 
@@ -17,6 +23,7 @@ from __future__ import annotations
 import datetime
 import json
 import re
+from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
@@ -26,52 +33,93 @@ from .plugin import TEST_ARTIFACTS_MARKER
 REPORT = "report.html"
 TRIAGE = "triage.json"
 VISION = "vision.json"
-TESTS = {"test_renders": "renders", "test_matches_baseline": "baseline", "test_matches_reference": "reference"}
-# The comparisons: their name, CSS class and what a difference means.
-KINDS = {
-    "test_matches_baseline": (
-        "Regression check",
-        "regression",
-        "A difference is a change since the baselines were stored: a regression, or an improvement to accept as the "
-        "new baseline.",
-    ),
-    "test_matches_reference": (
-        "Engine comparison",
-        "gap",
-        "A difference is a gap between the two engines, not a change; known gaps belong in the expectations.",
-    ),
-}
+BASELINE = "test_matches_baseline"
+REFERENCE = "test_matches_reference"
+RENDERS = "test_renders"
+TESTS = {RENDERS: "renders", BASELINE: "baseline", REFERENCE: "reference"}
 KEY = re.compile(r"^page_scenarios/test_pages\.py::(test_\w+)\[(.+)\]$")
 SERVO = re.compile(r"\bServo/(\S+)")
+# A page's verdict: its title and CSS class, most urgent first, which is the order of the pages in the report.
+VERDICTS = {
+    "error": "Not compared",
+    "regression": "Likely regression",
+    "mixed": "Mixed",
+    "unclear": "Changed, unclear",
+    "unjudged": "Changed, not judged",
+    "improvement": "Likely improvement",
+    "new": "No baseline",
+    "unchanged": "Unchanged",
+}
+# Region crops are enlarged up to this factor, to at most this many CSS px; strips wider than WIDE times their height
+# go one per row, up to twice as wide.
+CROP_ZOOM = 4
+CROP_SIZE = 340
+WIDE = 2.5
+CROP_MARGIN = 8
+# How diff.json files from before `toward_reference` put it in words, and the distances in it.
+TOWARD_PREFIXES = (("closer", "closer"), ("further", "further"), ("as far", "same"))
+DISTANCES = re.compile(r"\(([\d.]+) -> ([\d.]+)\)$")
+# The share of a page's changed pixels whose regions must move toward the reference, or away from it, for its verdict
+# to say so; a few pixels that moved shouldn't make a page an improvement.
+VERDICT_SHARE = 0.1
 
 STYLE = """
 :root {
   --bg: #ffffff; --fg: #1d1d1f; --muted: #6b6b70; --line: #dcdce0; --card: #f5f5f7; --pass: #1a7f37;
   --fail: #c62828; --skip: #75757a; --box: #1565c0; --note: #fff7d6;
+  --better: #1a7f37; --worse: #c62828; --mixed: #a35f00; --neutral: #6b6b70;
+  --old: #8a8a8f; --new: #1565c0; --ref: #7b4fc9; --changed: #d32f2f;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16171a; --fg: #e8e8ea; --muted: #9a9aa0; --line: #34353b; --card: #1f2024; --pass: #57b75b;
     --fail: #ef5350; --skip: #9a9aa0; --box: #64b5f6; --note: #2c2814;
+    --better: #57b75b; --worse: #ef5350; --mixed: #e0a040; --neutral: #9a9aa0;
+    --old: #9a9aa0; --new: #64b5f6; --ref: #b39ddb; --changed: #ef5350;
   }
 }
 body { margin: 0 auto; padding: 16px; max-width: 1600px; background: var(--bg); color: var(--fg);
   font: 14px/1.45 system-ui, sans-serif; }
 h1 { font-size: 22px; margin: 0 0 4px; }
-h2 { font-size: 19px; margin: 32px 0 8px; padding-top: 12px; border-top: 2px solid var(--line); }
-h3 { font-size: 16px; margin: 20px 0 8px; }
-h4 { font-size: 14px; margin: 16px 0 8px; }
+h2 { font-size: 19px; margin: 32px 0 6px; padding-top: 12px; border-top: 2px solid var(--line); }
+h3 { font-size: 16px; margin: 20px 0 6px; }
+h4 { font-size: 14px; margin: 18px 0 8px; }
 code { font-size: 12px; }
+a { color: inherit; }
 .muted { color: var(--muted); }
 .status { font-weight: 600; }
 .PASS { color: var(--pass); } .FAIL, .TIMEOUT, .CRASH { color: var(--fail); } .SKIP { color: var(--skip); }
 .unexpected::after { content: " (unexpected)"; font-weight: 400; }
 table { border-collapse: collapse; margin: 8px 0; }
 th, td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
-.shots { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
-figure { margin: 0; min-width: 0; max-width: 100%; }
 .wide { overflow-x: auto; }
-figcaption { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.legend { background: var(--card); border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.legend p { margin: 0 0 8px; }
+dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+dt { color: var(--muted); }
+dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.legend dt { color: var(--fg); font-weight: 600; }
+.side::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 2px;
+  background: var(--side, var(--muted)); vertical-align: 0; }
+.side.old { --side: var(--old); } .side.new { --side: var(--new); } .side.ref { --side: var(--ref); }
+.side.changed { --side: var(--changed); }
+.verdict { display: inline-block; padding: 3px 8px; border-radius: 4px; font: 600 12px/1.3 system-ui, sans-serif;
+  border: 1px solid transparent; vertical-align: 2px; white-space: nowrap; }
+.v-regression { background: var(--worse); color: #fff; } .v-improvement { background: var(--better); color: #fff; }
+.v-mixed { background: var(--mixed); color: #fff; } .v-unclear { background: var(--neutral); color: #fff; }
+.v-unjudged, .v-new { border-color: var(--neutral); color: var(--fg); }
+.v-error { border-color: var(--fail); color: var(--fail); }
+.v-unchanged { border-color: var(--line); color: var(--muted); }
+.tally { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.why { margin: 4px 0 8px; }
+.toward { display: inline-block; padding: 1px 6px; border-radius: 3px; font-weight: 600; font-size: 12px;
+  border: 1px solid transparent; }
+.t-closer { background: var(--better); color: #fff; } .t-further { background: var(--worse); color: #fff; }
+.t-same { background: var(--neutral); color: #fff; } .t-none { border-color: var(--neutral); color: var(--muted); }
+.shots { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  align-items: start; }
+figure { margin: 0; min-width: 0; max-width: 100%; }
+figcaption { font-size: 12px; margin-top: 3px; }
 .shot { position: relative; line-height: 0; border: 1px solid var(--line); max-width: 100%; }
 .shot img { width: 100%; height: auto; }
 .flip .top { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
@@ -80,24 +128,34 @@ figcaption { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .box span { position: absolute; top: -2px; left: -2px; padding: 2px 4px; background: var(--box); color: #fff;
   font: 600 11px/1 system-ui, sans-serif; }
 #boxes:not(:checked) ~ main .box { display: none; }
-.regions { list-style: none; padding: 0; display: grid; gap: 12px;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
-.regions li { background: var(--card); border-radius: 6px; padding: 8px; }
-.regions img { max-width: 100%; max-height: 720px; height: auto; }
+.regions { list-style: none; padding: 0; display: grid; gap: 12px; }
+.regions > li { background: var(--card); border-radius: 6px; padding: 8px 10px; min-width: 0; }
+.region-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.crops { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 4px; align-items: flex-start; }
+.crops.stacked { flex-direction: column; }
+.view { position: relative; overflow: hidden; max-width: 100%; border: 1px solid var(--line); background: #808080; }
+.view img { position: absolute; max-width: none; height: auto; }
 .badge { display: inline-block; min-width: 18px; padding: 1px 5px; background: var(--box); color: #fff;
   border-radius: 3px; text-align: center; font-weight: 600; }
-dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
-dt { color: var(--muted); }
-dd { margin: 0; }
 .note { background: var(--note); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
 .note p { margin: 4px 0; }
 pre { white-space: pre-wrap; word-break: break-word; background: var(--card); padding: 8px; border-radius: 6px; }
-.kind { display: inline-block; padding: 3px 6px; border-radius: 3px; color: #fff;
-  font: 600 11px/1 system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.04em; vertical-align: 2px; }
-.kind.regression { background: #8a5a00; } .kind.gap { background: #5b3fa0; }
-.overview { list-style: none; padding: 0; margin: 8px 0; } .overview li { margin: 4px 0; }
-details { margin: 4px 0; } summary { cursor: pointer; }
+details { margin: 8px 0; } summary { cursor: pointer; }
+details.gaps > summary { font-size: 16px; font-weight: 600; margin: 16px 0 6px; }
 """
+
+
+@dataclass(frozen=True)
+class Side:
+    """One rendering in a comparison: `role` is old, new or ref, `name` what the report calls it, `detail` which build
+    and when it was rendered."""
+
+    role: str
+    name: str
+    detail: str
+
+    def label(self, extra: str = "") -> str:
+        return f'<span class="side {self.role}">{escape(self.name)}</span>{extra}'
 
 
 def _load(path: Path) -> dict:
@@ -136,82 +194,157 @@ def _dom_change(change: dict) -> str:
     return "; ".join(parts)
 
 
-def _who(info: object, label: str = "") -> str:
-    """An engine and its version, from what a rendering recorded about it (the name --engine-version gave its build
-    first); the engine's name only where it isn't `label`."""
+def _product(info: object) -> str:
+    """What a rendering recorded about its engine, as a product name: Servo, ArkWeb, or the engine's own name; empty
+    if it recorded nothing."""
     if not isinstance(info, dict):
         return ""
-    name = str(info.get("engine", ""))
+    if info.get("arkweb"):
+        return "ArkWeb"
+    if SERVO.search(str(info.get("user_agent", ""))):
+        return "Servo"
+    return str(info.get("engine", ""))
+
+
+def _build(info: object) -> str:
+    """The engine, the name --engine-version gave its build and the version it reports."""
+    if not isinstance(info, dict):
+        return ""
     if info.get("arkweb"):
         detected = f"ArkWeb {info['arkweb']}" + (f", Chromium {info['chromium']}" if info.get("chromium") else "")
     elif match := SERVO.search(str(info.get("user_agent", ""))):
         detected = f"Servo {match.group(1)}"
     else:
         detected = str(info.get("user_agent", ""))
-    version = " · ".join(part for part in (str(info.get("version") or ""), detected) if part)
-    if name == label:
-        return version or name
-    return f"{name} ({version})" if version else name
+    return " · ".join(part for part in (str(info.get("engine", "")), str(info.get("version") or ""), detected) if part)
 
 
-def _origin(expected: object) -> tuple[object, str]:
-    """The engine of the captures a comparison compared with, and when they were stored or that they were rendered in
-    the run."""
-    if not isinstance(expected, dict):
+def _origin(stored: object) -> tuple[object, str]:
+    """The engine of stored captures a comparison compared with, and when they were stored or that they were rendered
+    in the run."""
+    if not isinstance(stored, dict):
         return None, ""
-    if not isinstance(expected.get("engine"), dict):
-        return expected, ""  # older diff.json: the baseline's engine only
-    when = "rendered in this run" if expected.get("from") == "rendered in this run" else ""
-    if expected.get("stored"):
-        when = f"stored {str(expected['stored'])[:10]}" + (f" ({expected['reason']})" if expected.get("reason") else "")
-    return expected["engine"], when
+    if not isinstance(stored.get("engine"), dict):
+        return stored, ""  # older diff.json: the baseline's engine only
+    when = "rendered in this run" if stored.get("from") == "rendered in this run" else ""
+    if stored.get("stored"):
+        when = f"stored {str(stored['stored'])[:10]}" + (f" ({stored['reason']})" if stored.get("reason") else "")
+    return stored["engine"], when
 
 
-def _sides(report: dict) -> str:
-    """What a comparison compared: both engines with their versions, and when the expected captures were stored."""
+def _detail(info: object, when: str) -> str:
+    return " · ".join(part for part in (_build(info), when) if part)
+
+
+def _sides(test: str, report: dict) -> dict[str, Side]:
+    """The renderings a comparison's `diff.json` compared, by role; for a regression check, with the reference
+    engine's if it judged the changes."""
     labels = report.get("labels", ["expected", "actual"])
-    engine, when = _origin(report.get("expected"))
-    expected = ", ".join(part for part in (_who(engine, labels[0]), when) if part)
-    actual = _who(report.get("actual"), labels[1])
-    if not expected and not actual:
-        return ""
-    return f"{escape(labels[0])}: {escape(expected or '?')} · {escape(labels[1])} now: {escape(actual or '?')}"
+    actual = report.get("actual")
+    product = _product(actual) or labels[1]
+    new = Side("new", f"New {product}", _detail(actual, "this run"))
+    expected, when = _origin(report.get("expected"))
+    if test == REFERENCE:
+        return {"ref": Side("ref", _product(expected) or labels[0], _detail(expected, when)), "new": new}
+    # The baselines are the same engine's, which may not have recorded what it is.
+    sides = {"old": Side("old", f"Old {product}", _detail(expected, when)), "new": new}
+    if "reference" in report:
+        engine, when = _origin(report["reference"])
+        sides["ref"] = Side("ref", _product(engine) or "the reference", _detail(engine, when))
+    return sides
 
 
-def _overview(comparisons: dict[str, list[dict]]) -> str:
-    """What the run compared, per kind of comparison, and what a difference means for each."""
-    items = []
-    for test, reports in comparisons.items():
-        title, css, meaning = KINDS[test]
-        labelled = [report.get("labels", ["expected", "actual"]) for report in reports]
-        if test == "test_matches_baseline":
-            now = sorted(
-                {_who(report.get("actual")) or labels[1] for labels, report in zip(labelled, reports, strict=True)}
-            )
-            then = sorted({who for report in reports if (who := _who(_origin(report.get("expected"))[0]))})
-            dates = sorted(
-                {
-                    str(expected["stored"])[:10]
-                    for report in reports
-                    if isinstance(expected := report.get("expected"), dict) and expected.get("stored")
-                }
-            )
-            what = f"{', '.join(now) or 'The engine'} against its baselines"
-            if then and then != now:
-                what += f" of {', '.join(then)}"
-            if dates:
-                what += f", stored {', '.join(dates)}"
-        else:
-            pairs = sorted(
-                {
-                    f"{labels[1]} against {labels[0]}"
-                    + (f" ({who})" if (who := _who(_origin(report.get("expected"))[0], labels[0])) else "")
-                    for labels, report in zip(labelled, reports, strict=True)
-                }
-            )
-            what = "; ".join(pairs) or "The engine against another engine"
-        items.append(f'<li><span class="kind {css}">{title}</span> {escape(what)}. {meaning}</li>')
-    return f'<ul class="overview">{"".join(items)}</ul>' if items else ""
+def _toward(region: dict) -> str | None:
+    """Whether a changed region moved "closer" to the reference's rendering, "further" or stayed the "same"."""
+    if "toward_reference" in region:
+        return region["toward_reference"]
+    text = str(region.get("reference") or "")  # older diff.json: the hint in words only
+    return next((toward for prefix, toward in TOWARD_PREFIXES if text.startswith(prefix)), None)
+
+
+def _toward_chip(region: dict, reference: str) -> str:
+    toward = _toward(region)
+    titles = {"closer": f"Closer to {reference}", "further": f"Further from {reference}", "same": "No closer"}
+    title = titles.get(toward or "", "Not judged")
+    chip = f'<span class="toward t-{toward or "none"}">{escape(title)}</span>'
+    if match := DISTANCES.search(str(region.get("reference") or "")):
+        what = f"How far from {reference}'s rendering the old one is, and the new one"
+        chip += f'<span class=muted title="{escape(what)}">{match.group(1)} → {match.group(2)}</span>'
+    return chip
+
+
+@dataclass
+class Verdict:
+    key: str
+    why: str
+
+    @property
+    def chip(self) -> str:
+        return f'<span class="verdict v-{self.key}">{VERDICTS[self.key]}</span>'
+
+
+def _share(pixels: int, total: int) -> str:
+    share = 100 * pixels / total if total else 0
+    return "<1%" if 0 < share < 1 else f"{share:.0f}%"
+
+
+def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
+    """The verdict on a regression check that found changes, from how its regions moved relative to the reference."""
+    captures = report.get("captures", {})
+    changed = [entry for entry in captures.values() if not entry.get("matches")]
+    regions = [region for entry in changed for region in entry.get("regions", [])]
+    where = f"{len(regions)} changed region(s) in {len(changed)} capture(s)"
+    if not regions:
+        return Verdict("unclear", "; ".join(f"{name}: {entry.get('summary')}" for name, entry in captures.items()))
+    if report.get("description_error"):
+        return Verdict("unjudged", f"{where}; describing them failed: {report['description_error']}")
+    if "ref" not in sides:
+        return Verdict("unjudged", f"{where}; no reference rendering stored to judge them by")
+    reference = sides["ref"].name
+    pixels = {"closer": 0, "further": 0, "same": 0, None: 0}
+    counts = dict.fromkeys(pixels, 0)
+    for region in regions:
+        toward = _toward(region)
+        pixels[toward] += int(region.get("differing", 0))
+        counts[toward] += 1
+    total = sum(pixels.values())
+    parts = [
+        f"{counts[toward]} {words} ({_share(pixels[toward], total)} of the changed pixels)"
+        for toward, words in (
+            ("further", f"further from {reference}"),
+            ("closer", f"closer to {reference}"),
+            ("same", "no closer"),
+            (None, "not judged"),
+        )
+        if counts[toward]
+    ]
+    why = f"{where}: {', '.join(parts)}"
+    further, closer = (total and pixels[toward] >= VERDICT_SHARE * total for toward in ("further", "closer"))
+    if further and closer:
+        return Verdict("mixed", why)
+    if further:
+        return Verdict("regression", why)
+    if closer:
+        return Verdict("improvement", why)
+    if not counts["same"] and not counts["further"] and not counts["closer"]:
+        reason = next((str(region["reference"]) for region in regions if region.get("reference")), "")
+        return Verdict("unjudged", f"{where}; {reason or f'{reference} was not compared'}")
+    return Verdict("unclear", f"{why}; too little of the change moved toward {reference} or away from it to tell")
+
+
+def _verdict(baseline: Result | None, report: dict, sides: dict[str, Side]) -> Verdict | None:
+    """A page's verdict from its regression check; None if the run had none."""
+    if baseline is None and not report:
+        return None
+    if baseline is not None and baseline.status == "PASS":
+        return Verdict("unchanged", "renders as before, so there is nothing to judge")
+    if report.get("captures"):
+        return _judge(report, sides)
+    message = baseline.message if baseline is not None else ""
+    if baseline is not None and baseline.status == "FAIL" and "no baseline in" in message:
+        return Verdict("new", "no baseline stored yet: only the engine comparison applies")
+    status = baseline.status if baseline is not None else "?"
+    return Verdict("error", f"the regression check ended {status}" + (f": {message}" if message else ""))
 
 
 def _shot(images: list[tuple[str, str]], width: float, boxes: str, caption: str) -> str:
@@ -222,22 +355,60 @@ def _shot(images: list[tuple[str, str]], width: float, boxes: str, caption: str)
         for index, (src, alt) in enumerate(images)
     )
     return (
-        f'<figure><div class="shot{" flip" if flip else ""}" style="width: {width:g}px">{tags}{boxes}</div>'
+        f'<figure><div class="shot{" flip" if flip else ""}" style="max-width: {width:g}px">{tags}{boxes}</div>'
         f"<figcaption>{caption}</figcaption></figure>"
     )
 
 
-def _capture(prefix: str, folder: Path, name: str, entry: dict, labels: list[str], answers: dict, notes: dict) -> str:
-    title = f"<h4>{escape(name)}: {escape(str(entry.get('summary', '')))}</h4>"
+def _crop(src: str, caption: str, box: tuple[float, float, float, float], size: list, zoom: float) -> str:
+    """The part `box` (CSS px of the compared part, `size`) of the image `src`, enlarged by `zoom`."""
+    left, top, right, bottom = box
+    width, height = right - left, bottom - top
+    style = f"width: {100 * size[0] / width:.3f}%; left: {-100 * left / width:.3f}%; top: {-100 * top / height:.3f}%"
+    return (
+        f'<figure><div class="view" style="width: {width * zoom:.0f}px; aspect-ratio: {width:g} / {height:g}">'
+        f'<img src="{escape(src)}" alt="" loading="lazy" style="{style}"></div><figcaption>{caption}</figcaption>'
+        "</figure>"
+    )
+
+
+def _capture(
+    prefix: str,
+    folder: Path,
+    name: str,
+    entry: dict,
+    panels: list[tuple[Side, str]],
+    answers: dict,
+    notes: dict,
+    judged_by: Side | None,
+) -> str:
+    """A differing capture: the compared images, `panels` of (side, image key) with the side that changed last, the
+    differing pixels, and a card per region. `judged_by` is the reference that judged the changes, if any."""
     images = entry.get("images")
+    regions = entry.get("regions", [])
+    shown = [(index, region) for index, region in enumerate(regions) if region.get("crop")]
+    reference = judged_by.name if judged_by else ""
+    summary = str(entry.get("summary", ""))
+    towards = [_toward(region) for region in regions]
+    if regions:
+        summary = f"{len(regions)} {'changed' if panels[0][0].role == 'old' else 'differing'} region(s)"
+        words = {"further": f"further from {reference}", "closer": f"closer to {reference}", "same": "no closer"}
+        judged = [f"{towards.count(toward)} {words[toward]}" for toward in words if toward in towards]
+        if judged_by is not None and judged:
+            summary += ": " + ", ".join(judged)
+    title = f"<h4>{escape(name)} <span class=muted>· {escape(summary)}</span></h4>"
+    # Why none of the regions could be judged, such as viewports of other widths, goes here once.
+    reasons = {str(region.get("reference") or "") for region in regions}
+    common = reasons.pop() if judged_by is not None and regions and not any(towards) and len(reasons) == 1 else ""
+    if common:
+        title += f"<p class=muted>{escape(reference)}: {escape(common)}</p>"
     if not images:
         compare = entry.get("compare")
         return title + (f'<img src="{escape(folder.name)}/{escape(compare)}" alt="">' if compare else "")
     base = f"{folder.name}/"
     width, height = entry["size"]
     offset = entry["offset"]
-    regions = entry.get("regions", [])
-    shown = [(index, region) for index, region in enumerate(regions) if region.get("crop")]
+    panels = [(side, key) for side, key in panels if images.get(key)]
     boxes = ""
     for index, region in shown:
         left, top, right, bottom = region["box"]
@@ -246,24 +417,37 @@ def _capture(prefix: str, folder: Path, name: str, entry: dict, labels: list[str
             f"width: {100 * (right - left) / width:.2f}%; height: {100 * (bottom - top) / height:.2f}%"
         )
         boxes += f'<a class="box" href="#{prefix}-{escape(name)}-{index}" style="{style}"><span>{index + 1}</span></a>'
-    expected, actual = (escape(label) for label in labels)
-    shots = [
-        _shot([(base + images["expected"], labels[0])], width, boxes, expected),
-        _shot(
-            [(base + images["expected"], labels[0]), (base + images["actual"], labels[1])],
-            width,
-            boxes,
-            f"{actual} <span class=muted>(hover: {expected})</span>",
-        ),
-        _shot([(base + images["differing"], "differing pixels")], width, boxes, "differing pixels in red"),
-    ]
+    first, *_ = panels
+    changes = "Changed pixels" if judged_by is not None or first[0].role == "old" else "Differing pixels"
+    differing = Side("changed", changes, "")
+    shots = []
+    for side, key in panels:
+        stack = [(base + images[key], side.name)]
+        caption = side.label()
+        if side.role == "new":
+            stack = [(base + images[first[1]], first[0].name), *stack]
+            caption = side.label(f" <span class=muted>(hover: {escape(first[0].name)})</span>")
+        shots.append(_shot(stack, width, boxes, caption))
+    shots.append(_shot([(base + images["differing"], changes)], width, boxes, differing.label()))
     items = []
     for index, region in shown:
         crop_id = Path(region["crop"]).stem
-        left, top, right, bottom = (round(value) for value in region["box"])
+        left, top, right, bottom = region["box"]
+        top, bottom = top - offset, bottom - offset
+        area = (
+            max(0, left - CROP_MARGIN),
+            max(0, top - CROP_MARGIN),
+            min(width, right + CROP_MARGIN),
+            min(height, bottom + CROP_MARGIN),
+        )
+        crop_width, crop_height = area[2] - area[0], area[3] - area[1]
+        stacked = crop_width > WIDE * crop_height
+        zoom = min(CROP_ZOOM, (2 if stacked else 1) * CROP_SIZE / crop_width, CROP_SIZE / crop_height)
+        crops = [_crop(base + images[key], side.label(), area, entry["size"], zoom) for side, key in panels]
+        crops.append(_crop(base + images["differing"], differing.label(), area, entry["size"], zoom))
         facts = [("Measured", escape(str(region.get("reading") or "")))]
-        if region.get("reference"):
-            facts.append(("Reference", escape(region["reference"])))
+        if judged_by is not None and region.get("reference") and _toward(region) is None and not common:
+            facts.append((reference, escape(str(region["reference"]))))
         if region.get("elements"):
             facts.append(("Elements", "<br>".join(_element(element) for element in region["elements"][:3])))
         answer = answers.get(region["crop"])
@@ -274,21 +458,37 @@ def _capture(prefix: str, folder: Path, name: str, entry: dict, labels: list[str
             )
         if crop_id in notes:
             facts.append(("Agent", escape(str(notes[crop_id]))))
+        chip = _toward_chip(region, reference) if judged_by is not None else ""
+        where = f"({round(left)}, {round(top + offset)})-({round(right)}, {round(bottom + offset)}) CSS px"
         items.append(
-            f'<li id="{prefix}-{escape(name)}-{index}"><span class="badge">{index + 1}</span> '
-            f"<code>{escape(crop_id)}</code> "
-            f"<span class=muted>({left}, {top})-({right}, {bottom}) CSS px, {region['differing']} px differ</span>"
-            f'<div><img src="{escape(base + region["crop"])}" alt="region {index + 1}" loading="lazy"></div>'
+            f'<li id="{prefix}-{escape(name)}-{index}"><div class="region-head"><span class="badge">{index + 1}</span>'
+            f"{chip}<span class=muted>{where}, {region['differing']} px differ, "
+            f'<a href="{escape(base + region["crop"])}"><code>{escape(crop_id)}</code></a></span></div>'
+            f'<div class="crops{" stacked" if stacked else ""}">{"".join(crops)}</div>'
             "<dl>" + "".join(f"<dt>{key}</dt><dd>{value}</dd>" for key, value in facts) + "</dl></li>"
         )
     rest = len(regions) - len(shown)
-    more = f"<p class=muted>{rest} smaller region(s) are outlined in the differing pixels only.</p>" if rest else ""
-    changes = entry.get("dom_changes", [])
+    more = ""
+    if rest:
+        tally = ""
+        if judged_by is not None:
+            rest_toward = [_toward(region) for region in regions if not region.get("crop")]
+            tally = (
+                " ("
+                + ", ".join(
+                    f"{rest_toward.count(toward)} {toward}"
+                    for toward in ("further", "closer", "same")
+                    if toward in rest_toward
+                )
+                + ")"
+            )
+        more = f"<p class=muted>{rest} smaller region(s){tally} are outlined in the differing pixels only.</p>"
+    dom_changes = entry.get("dom_changes", [])
     dom = (
-        f"<details><summary>{len(changes)} DOM change(s)</summary><ul>"
-        + "".join(f"<li>{_dom_change(change)}</li>" for change in changes)
+        f"<details><summary>{len(dom_changes)} DOM change(s)</summary><ul>"
+        + "".join(f"<li>{_dom_change(change)}</li>" for change in dom_changes)
         + "</ul></details>"
-        if changes
+        if dom_changes
         else ""
     )
     notes_html = "".join(f"<p class=muted>{escape(note)}</p>" for note in entry.get("notes", []))
@@ -302,20 +502,16 @@ def _capture(prefix: str, folder: Path, name: str, entry: dict, labels: list[str
     )
 
 
-def _comparison(prefix: str, test: str, folder: Path | None, result: Result | None) -> str:
-    title, css, _ = KINDS[test]
-    badge = f'<span class="kind {css}">{title}</span>'
+def _comparison(prefix: str, test: str, folder: Path | None, result: Result | None, sides: dict[str, Side]) -> str:
+    """The body of a comparison: what it compared, its notes and its differing captures."""
     report = _load(folder / "diff.json") if folder else {}
-    head = f'<h3 id="{prefix}">{badge} {_status(result)}</h3>'
+    head = ""
     if result is not None and result.message and (folder is None or result.status not in ("PASS", "FAIL")):
         head += f"<pre>{escape(result.message)}</pre>"
     if folder is None or not report:
         return head
-    labels = report.get("labels", ["expected", "actual"])
-    against = "its baseline" if test == "test_matches_baseline" else labels[0]
-    head = f'<h3 id="{prefix}">{badge} {escape(labels[1])} against {escape(against)} {_status(result)}</h3>'
-    if sides := _sides(report):
-        head += f"<p class=muted>{sides}</p>"
+    head += "<dl>" + "".join(f"<dt>{side.label()}</dt><dd>{escape(side.detail)}</dd>" for side in sides.values())
+    head += "</dl>"
     if error := report.get("description_error"):
         head += f"<p>Describing the differences failed: <code>{escape(str(error))}</code></p>"
     triage = _load(folder / TRIAGE)
@@ -334,10 +530,17 @@ def _comparison(prefix: str, test: str, folder: Path | None, result: Result | No
     }
     if vision:
         head += f"<p class=muted>Image model answers from {escape(str(vision.get('model')))}.</p>"
+    if test == BASELINE:
+        panels = [(sides["old"], "expected"), (sides["new"], "actual")]
+        if "ref" in sides:
+            panels.append((sides["ref"], "reference"))
+    else:
+        panels = [(sides["ref"], "expected"), (sides["new"], "actual")]
+    judged_by = sides.get("ref") if test == BASELINE else None
     captures = report.get("captures", {})
     matching = [name for name, entry in captures.items() if entry.get("matches")]
     body = "".join(
-        _capture(prefix, folder, name, entry, labels, answers, triage.get("regions", {}))
+        _capture(prefix, folder, name, entry, panels, answers, triage.get("regions", {}), judged_by)
         for name, entry in captures.items()
         if not entry.get("matches")
     )
@@ -373,7 +576,39 @@ def _rendering(folder: Path, data: dict) -> str:
         if failure.is_file()
         else ""
     )
-    return "<p>" + "<br>".join(lines) + "</p>" + origins + shot
+    return "<p class=muted>" + "<br>".join(lines) + "</p>" + origins + shot
+
+
+def _legend(sides: list[dict[str, Side]], checked: bool) -> str:
+    """What the report compares: each rendering with the builds and dates of the run, and how to read it."""
+    by_role: dict[str, list[Side]] = {}
+    for found in sides:
+        for side in found.values():
+            by_role.setdefault(side.role, []).append(side)
+    if not by_role:
+        return ""
+    names = {role: found[0].name for role, found in by_role.items()}
+    rows = "".join(
+        f"<dt>{found[0].label()}</dt><dd>{escape('; '.join(sorted({side.detail for side in found})))}</dd>"
+        for role in ("old", "new", "ref")
+        if (found := by_role.get(role))
+    )
+    reference = names.get("ref", "the reference engine")
+    new = names.get("new", "the engine")
+    if checked:
+        how = (
+            f"Each page's rendering by {new} is compared with {names.get('old', 'its baseline')}'s. A page that "
+            f"renders as before needs nothing more. Where it changed, {reference}'s rendering judges each change: one "
+            f"that brings the page closer to {reference} is likely an improvement, one that takes it further away "
+            "likely a regression. The judgement compares pixels, allowing for content a few pixels apart, and is a "
+            "hint: check it against the pictures."
+        )
+    else:
+        how = (
+            f"Each page's rendering by {new} is compared with {reference}'s. Without baselines, a difference is a gap "
+            "between the engines, not a change; known gaps belong in the expectations."
+        )
+    return f'<div class="legend"><p>{escape(how)}</p><dl>{rows}</dl></div>'
 
 
 def write_report(artifacts: Path, results_json: Path | None = None) -> Path | None:
@@ -399,43 +634,95 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
             results[(match.group(2), match.group(1))] = result
     scenarios = sorted({scenario for scenario, _ in [*tests, *results]} | set(renderings))
     kinds = [test for test in TESTS if any(kind == test for _, kind in [*tests, *results])]
+    checked = BASELINE in kinds
+    diffs = {key: _load(folder / "diff.json") for key, folder in tests.items() if key[1] in (BASELINE, REFERENCE)}
+    sides = {key: _sides(key[1], diff) for key, diff in diffs.items() if diff}
+    verdicts = {
+        scenario: _verdict(
+            results.get((scenario, BASELINE)),
+            diffs.get((scenario, BASELINE), {}),
+            sides.get((scenario, BASELINE), {}),
+        )
+        for scenario in scenarios
+    }
+    order = list(VERDICTS)
+    scenarios.sort(key=lambda scenario: order.index(verdict.key) if (verdict := verdicts[scenario]) else 0)
+    names = {side.role: side.name for found in sides.values() for side in found.values()}
+    old, new, ref = (
+        names.get(role, default) for role, default in (("old", "Old"), ("new", "New"), ("ref", "reference"))
+    )
+    columns = {RENDERS: "Renders", BASELINE: f"{old} → {new}", REFERENCE: f"{new} against {ref}"}
+    head = ("<th>Verdict</th>" if checked else "") + "".join(f"<th>{escape(columns[kind])}</th>" for kind in kinds)
     rows = "".join(
         f'<tr><td><a href="#{escape(scenario)}">{escape(scenario)}</a></td>'
+        + (f"<td>{verdict.chip if (verdict := verdicts[scenario]) else ''}</td>" if checked else "")
         + "".join(f"<td>{_status(results.get((scenario, kind)))}</td>" for kind in kinds)
         + "</tr>"
         for scenario in scenarios
     )
-    head = "".join(f"<th>{KINDS[kind][0].lower() if kind in KINDS else TESTS[kind]}</th>" for kind in kinds)
-    summary = f'<div class="wide"><table><tr><th>Scenario</th>{head}</tr>{rows}</table></div>'
-    comparisons = {
-        kind: [
-            diff
-            for (_, test), folder in sorted(tests.items())
-            if test == kind and (diff := _load(folder / "diff.json"))
-        ]
-        for kind in kinds
-        if kind in KINDS
-    }
+    summary = f'<div class="wide"><table><tr><th>Page</th>{head}</tr>{rows}</table></div>'
+    counts = {key: sum(1 for verdict in verdicts.values() if verdict and verdict.key == key) for key in VERDICTS}
+    tally = (
+        '<div class="tally">'
+        + "".join(
+            f'<span class="verdict v-{key}">{count} × {VERDICTS[key].lower()}</span>'
+            for key, count in counts.items()
+            if count
+        )
+        + "</div>"
+        if checked
+        else ""
+    )
     sections = []
     for scenario in scenarios:
-        parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)}</h2>']
+        verdict = verdicts[scenario]
+        parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)} {verdict.chip if verdict else ""}</h2>']
+        if verdict:
+            parts.append(f"<p class=why>{escape(verdict.why[:1].upper() + verdict.why[1:])}.</p>")
         found = renderings.get(scenario, [])
         parts += [_rendering(folder, data) for folder, data in found]
-        renders = results.get((scenario, "test_renders"))
+        renders = results.get((scenario, RENDERS))
         explained = any(data.get("problems") or data.get("error") for _, data in found)
         if renders is not None and renders.status != "PASS" and renders.message and not explained:
             parts.append(f"<pre>{escape(renders.message)}</pre>")
-        for kind in ("test_matches_baseline", "test_matches_reference"):
-            folder = tests.get((scenario, kind))
-            if folder is not None or (scenario, kind) in results:
-                prefix = f"{scenario}-{TESTS[kind]}"
-                parts.append(_comparison(prefix, kind, folder, results.get((scenario, kind))))
+        key = (scenario, BASELINE)
+        found_sides = sides.get(key, {})
+        if key in tests or key in results:
+            if verdict is None or verdict.key != "unchanged":
+                title = f"{found_sides['old'].name} → {found_sides['new'].name}" if found_sides else "Regression check"
+                parts.append(f'<h3 id="{escape(scenario)}-baseline">{escape(title)} {_status(results.get(key))}</h3>')
+                parts.append(
+                    _comparison(f"{scenario}-baseline", BASELINE, tests.get(key), results.get(key), found_sides)
+                )
+        key = (scenario, REFERENCE)
+        if key in tests or key in results:
+            found_sides = sides.get(key, {})
+            title = (
+                f"{found_sides['new'].name} against {found_sides['ref'].name}" if found_sides else "Engine comparison"
+            )
+            body = _comparison(f"{scenario}-reference", REFERENCE, tests.get(key), results.get(key), found_sides)
+            heading = f"{escape(title)} {_status(results.get(key))}"
+            if verdict is not None and verdict.key != "new" and body:
+                regions = sum(
+                    len(entry.get("regions", []))
+                    for entry in diffs.get(key, {}).get("captures", {}).values()
+                    if not entry.get("matches")
+                )
+                parts.append(
+                    f'<details class="gaps" id="{escape(scenario)}-reference"><summary>{heading} '
+                    f"<span class=muted>({regions} differing region(s); the gaps that remain)</span></summary>"
+                    f"{body}</details>"
+                )
+            else:
+                parts.append(f'<h3 id="{escape(scenario)}-reference">{heading}</h3>{body}')
         sections.append("<section>" + "".join(parts) + "</section>")
     environment = report.environment if report else {}
     device = ", ".join(f"{key} {value}" for key, value in environment.items() if isinstance(value, str | int | float))
     written = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
     failed = sum(
-        1 for (_, kind), result in results.items() if kind in KINDS and result.status == "FAIL" and result.unexpected
+        1
+        for (_, kind), result in results.items()
+        if kind in (BASELINE, REFERENCE) and result.status == "FAIL" and result.unexpected
     )
     triage = (
         f'<p class="note">{failed} comparison(s) failed. An agent can triage them with the skill that comes with '
@@ -449,7 +736,7 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
         f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
         f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
         f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
-        f"{_overview(comparisons)}{triage}"
+        f"{_legend(list(sides.values()), checked)}{tally}{triage}"
         '<input type="checkbox" id="boxes" checked> <label for="boxes">Show region boxes</label>'
         f"<main>{summary}{''.join(sections)}</main></body></html>\n"
     )

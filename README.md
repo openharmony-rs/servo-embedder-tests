@@ -194,11 +194,15 @@ A comparison test passes or fails as soon as the tiles are compared. Describing 
 readings, DOM changes and images, takes seconds per capture, so it runs in up to four background processes while the
 run goes on to the next test; `diff.json` and the images are complete when the run ends.
 
-For people, a run writes `report.html` to the artifacts folder: per scenario, each differing capture next to what it
-was compared with (hover the actual one to see the expected one in its place), the differing pixels, the regions
-numbered with their enlarged crops and readings, and the DOM changes. Where an agent triaged the run, the report also
-shows the image model's answers and the agent's conclusion (`triage.json` in the test's folder, see the skill), so
-that you can check them against the pictures. `servo-embedder-tests report <artifacts>` writes it again.
+For people, a run writes `report.html` to the artifacts folder. It starts with each page's verdict: unchanged since
+its baseline, or, where it changed, a likely regression or improvement by whether the changes took it away from the
+reference engine's rendering or toward it, mixed, or unclear. For each changed capture it shows the old rendering,
+the new one (hover it to see the old one in its place), the reference engine's and the changed pixels, then each
+region numbered with its verdict, the renderings of it side by side and enlarged, its readings and the DOM changes.
+The engine comparison, the gaps that remain to the reference engine, is folded away below; without baselines, it is
+all the report shows. Where an agent triaged the run, the report also shows the image model's answers and the agent's
+conclusion (`triage.json` in the test's folder, see the skill), so that you can check them against the pictures.
+`servo-embedder-tests report <artifacts>` writes it again.
 
 `page-scenarios.toml` in the folder sets defaults for all scenarios, `scenario.toml` in a scenario's folder
 overrides them. Changes to the page are opt-in, under `[page]`:
