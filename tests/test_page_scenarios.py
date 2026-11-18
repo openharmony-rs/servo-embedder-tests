@@ -296,6 +296,11 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
         "user_agent": "Mozilla/5.0 (OpenHarmony; Mobile) Servo/0.8.0 Firefox/153.0",
         "version": "main@3f2a1b",
     }
+    arkweb = {"engine": "arkweb", "arkweb": "7.0.0.38", "chromium": "144.0.7559.59"}
+    references = CaptureStore(tmp_path / "baselines", "rk3568", "arkweb")
+    rendered = _rendering(tmp_path / "arkweb", engine="arkweb", heading="Menu!")
+    rendered.info["engine"] = arkweb
+    references.put(rendered, reason="reference rendering")
     key = f"{cli.BASELINE_TEST}menu]"
     folder = artifacts / "baseline-menu"
     folder.mkdir()
@@ -308,7 +313,8 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
         store_preset(),
         folder,
         ("baseline", "servoshell"),
-        describe=lambda: {"expected": origin, "actual": servo},
+        references.captures("menu"),
+        describe=lambda: {"expected": origin, "actual": servo, "reference": references.origin("menu")},
     )
     answer = {"crop": "regions/page-0-0.png", "main": "an exclamation mark <added>", "verdict": "neutral"}
     (folder / "vision.json").write_text(json.dumps({"model": "m", "answer": {"regions": [answer]}}))
@@ -318,7 +324,6 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     reference = artifacts / "reference-menu"
     reference.mkdir()
     (reference / TEST_ARTIFACTS_MARKER).write_text(reference_key + "\n")
-    arkweb = {"engine": "arkweb", "arkweb": "7.0.0.38", "chromium": "144.0.7559.59"}
     compare_captures(
         store.captures("menu"),
         rendering,
@@ -329,27 +334,45 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     )
     result = {"key": key, "status": "FAIL", "expected": ["PASS"], "message": "1 capture(s) differ"}
     reference_result = {"key": reference_key, "status": "FAIL", "expected": ["FAIL"], "message": "differ"}
-    results = {key: result, reference_key: reference_result}
+    unchanged_key = f"{cli.BASELINE_TEST}order]"
+    unchanged = {"key": unchanged_key, "status": "PASS", "expected": ["PASS"], "message": ""}
+    results = {key: result, reference_key: reference_result, unchanged_key: unchanged}
     (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": results}))
     assert cli.main(["report", str(artifacts)]) == 0
     page = (artifacts / "report.html").read_text()
     assert 'src="baseline-menu/page-0-expected.png"' in page and 'class="box"' in page
+    assert 'src="baseline-menu/page-0-reference.png"' in page and 'class="view"' in page
     assert "an exclamation mark &lt;added&gt;" in page and "added text" in page and "new heading" in page
     assert '<span class="status FAIL unexpected">' in page
     assert "1 comparison(s) failed. An agent can triage them with the skill" in page
     stored = store.index("menu")["stored"][:10]
-    assert '<span class="kind regression">Regression check</span> servoshell against its baseline' in page
-    now = "servoshell now: main@3f2a1b · Servo 0.8.0"
-    assert f"baseline: servoshell (v0.8.0-ohos), stored {stored} (--update-baselines) · {now}" in page
-    assert '<span class="kind gap">Engine comparison</span> servoshell against arkweb' in page
-    assert f"arkweb: ArkWeb 7.0.0.38, Chromium 144.0.7559.59, rendered in this run · {now}" in page
-    assert (
-        "servoshell (main@3f2a1b · Servo 0.8.0) against its baselines of servoshell (v0.8.0-ohos), "
-        f"stored {stored}. A difference is a change"
-    ) in page
-    assert "servoshell against arkweb (ArkWeb 7.0.0.38, Chromium 144.0.7559.59). A difference is a gap" in page
+    referenced = references.index("menu")["stored"][:10]
+    legend = (
+        f'<dt><span class="side old">Old Servo</span></dt><dd>servoshell · v0.8.0-ohos · stored {stored} '
+        '(--update-baselines)</dd><dt><span class="side new">New Servo</span></dt><dd>servoshell · main@3f2a1b · '
+        'Servo 0.8.0 · this run</dd><dt><span class="side ref">ArkWeb</span></dt><dd>arkweb · ArkWeb 7.0.0.38, '
+        f"Chromium 144.0.7559.59 · stored {referenced} (reference rendering)</dd>"
+    )
+    assert legend in page
+    assert "Where it changed, ArkWeb&#x27;s rendering judges each change" in page
+    assert "<th>Old Servo → New Servo</th><th>New Servo against ArkWeb</th>" in page
+    assert '<h2 id="menu">menu <span class="verdict v-improvement">Likely improvement</span></h2>' in page
+    assert "1 changed region(s) in 1 capture(s): 1 closer to ArkWeb (100% of the changed pixels)." in page
+    assert '<span class="toward t-closer">Closer to ArkWeb</span>' in page
+    assert '<details class="gaps" id="menu-reference"><summary>New Servo against ArkWeb' in page
+    assert '<span class="verdict v-unchanged">Unchanged</span>' in page
+    assert page.index('id="menu"') < page.index('id="order"')
     assert "<details><summary>2 resource(s) from other origins</summary>" in page
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
+
+
+def test_the_report_reads_the_reference_hint_of_older_diff_json():
+    from servo_embedder_tests.report import _toward
+
+    assert _toward({"reference": "further from the reference (1.0 -> 2.0)"}) == "further"
+    assert _toward({"reference": "as far from the reference as before (1.0 -> 1.0)"}) == "same"
+    assert _toward({"reference": "not all in the reference's or the earlier capture's viewport"}) is None
+    assert _toward({"reference": "closer to the reference (2.0 -> 1.0)", "toward_reference": None}) is None
 
 
 def test_renderings_carry_the_name_given_to_the_engines_build(tmp_path):

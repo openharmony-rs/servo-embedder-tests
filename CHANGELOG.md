@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The page scenario report reads as a three-way comparison: each page gets a verdict (unchanged, likely regression,
+  likely improvement, mixed, unclear) from whether its changes since the baseline moved toward the reference engine's
+  rendering or away from it. Changed captures and their regions show the old rendering, the new one and the
+  reference's side by side; the engine comparison is folded away where there is a baseline. Renderings are named
+  after their engine and role, e.g. Old Servo, New Servo and ArkWeb, with their builds.
 - Whether a change moved toward the reference engine's rendering allows for content laid out up to 24 CSS px apart
   and compares colours; before, a blank region counted as closer to the reference's text than text a few pixels off.
   Regions in `diff.json` have `toward_reference` (closer, further, same or null), baseline tests record where the
