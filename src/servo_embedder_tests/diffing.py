@@ -52,7 +52,8 @@ COLOUR_REACH = 2
 # Whether a change moved toward another engine's rendering: how far, in CSS px, a region's content may lie from where
 # the other engine has it and still count as found there (engines lay out text a few pixels apart), and the CSS px of
 # context around the region, and the share by which the distance to it must change to count (10% made 11 of 163
-# regions of pages with features turned off come out closer, 15% 7; 20% lost real changes).
+# regions of pages with features turned off come out closer, 15% 7; 20% lost real changes). More context dilutes
+# the change: with 8, 12 or 16 px, 88, 80 or 69 of those regions came out further, against 95 with 4.
 REFERENCE_SEARCH = 24
 REFERENCE_MARGIN = 4
 REFERENCE_CHANGE = 0.15
@@ -763,12 +764,13 @@ def reference_hint(previous: Shot, current: Shot, reference: Shot, regions: Sequ
     Regions are in `current`'s viewport. How far two renderings are apart in a region: each one's part there where it
     best matches the other within REFERENCE_SEARCH CSS px, in colour, the worse of the two. Engines lay out text a few
     pixels apart: compared in place, text that moved a little is further from the reference's text than a blank is,
-    and a blank is found in any blank part of the reference, but not the reference's text in it. Distances that differ
-    by less than REFERENCE_CHANGE count as the same. On GenUI pages on a DAYU200 (2026-11-18), with features turned
-    off, 98% of the changed pixels came out further from ArkWeb and 1% closer (compared in place: 60% and 14%); of 23
-    hidden, resized or refonted elements, 14 further and 3 closer (in place: 7 and 7). The engines rasterize
-    differently, so this is a hint for triage: a change toward the reference is more likely an improvement, one away
-    from it more likely a regression.
+    and a blank is found in any blank part of the reference, but not the reference's text in it. Beyond the edges of a
+    capture, and under masks, the search sees the part's median colour, so that regions at the edges can be aligned
+    too. Distances that differ by less than REFERENCE_CHANGE count as the same. On GenUI pages on a DAYU200
+    (2026-11-18), with features turned off, 98% of the changed pixels came out further from ArkWeb and 1% closer
+    (compared in place: 60% and 14%); of 23 hidden, resized or refonted elements, 14 further and 3 closer (in place: 7
+    and 7). The engines rasterize differently, so this is a hint for triage: a change toward the reference is more
+    likely an improvement, one away from it more likely a regression.
     """
     if reference.size[0] != current.size[0]:
         for region in regions:
@@ -777,17 +779,11 @@ def reference_hint(previous: Shot, current: Shot, reference: Shot, regions: Sequ
                 f"{current.size[0]}"
             )
         return
-    import numpy as np
-
-    renderings = [
-        (np.asarray(shot.load(shot.scroll, shot.size).resize(shot.size, Image.Resampling.BOX), np.float32), shot.scroll)
-        for shot in (previous, current, reference)
-    ]
-    before, after, ref = renderings
+    before, after, ref = (_Document(shot) for shot in (previous, current, reference))
     for region in regions:
         left, top, right, bottom = region.box
         box = (left, top + current.scroll, right, bottom + current.scroll)
-        old, new = _apart(*before, *ref, box), _apart(*after, *ref, box)
+        old, new = _apart(before, ref, box), _apart(after, ref, box)
         if old is None or new is None:
             region.reference = "not all in the reference's or the earlier capture's viewport"
         elif abs(new - old) < max(1.0, REFERENCE_CHANGE * max(old, new)):
@@ -801,41 +797,62 @@ def reference_hint(previous: Shot, current: Shot, reference: Shot, regions: Sequ
             region.reference = f"further from the reference ({old:.1f} -> {new:.1f})"
 
 
-def _apart(a, a_top: float, b, b_top: float, box: CssBox) -> float | None:  # noqa: ANN001 - NumPy arrays
-    """How far renderings `a` and `b`, RGB arrays at one pixel per CSS pixel of the document from `a_top` and `b_top`
-    down, are apart in `box`, in document CSS px (see `reference_hint`); None if `box` isn't in both."""
+class _Document:
+    """A capture as an RGB array at one pixel per CSS pixel, placed in the document: NaN under its masks. `shown` is
+    the part of the document, from the top down, that it shows."""
+
+    def __init__(self, shot: Shot) -> None:
+        import numpy as np
+
+        self.top = shot.scroll
+        self.shown = (shot.scroll, shot.scroll + shot.size[1])
+        image = shot.load(shot.scroll, shot.size).resize(shot.size, Image.Resampling.BOX)
+        self.pixels = np.asarray(image, np.float32).copy()
+        for left, top, right, bottom in shot.masks:
+            self.pixels[max(0, round(top)) : max(0, round(bottom)), max(0, round(left)) : max(0, round(right))] = np.nan
+
+    def part(self, box: tuple[int, int, int, int]):  # noqa: ANN201 - a NumPy array
+        """The part `box`, in document CSS px, which may reach beyond what the capture shows, with what it doesn't
+        show in the median colour of the rest; None if it shows none of it."""
+        import numpy as np
+
+        left, top, right, bottom = box
+        part = np.full((bottom - top, right - left, 3), np.nan, np.float32)
+        offset = round(self.top)
+        rows = (max(top, offset), min(bottom, offset + self.pixels.shape[0]))
+        columns = (max(left, 0), min(right, self.pixels.shape[1]))
+        if rows[1] > rows[0] and columns[1] > columns[0]:
+            part[rows[0] - top : rows[1] - top, columns[0] - left : columns[1] - left] = self.pixels[
+                rows[0] - offset : rows[1] - offset, columns[0] : columns[1]
+            ]
+        missing = np.isnan(part)
+        if missing.all():
+            return None
+        if missing.any():
+            part = np.where(missing, np.nanmedian(part, axis=(0, 1)), part)
+        return part
+
+
+def _apart(a: _Document, b: _Document, box: CssBox) -> float | None:
+    """How far renderings `a` and `b` are apart in `box`, in document CSS px (see `reference_hint`); None if `box`
+    isn't in what both show."""
     import cv2
 
-    shown_top, shown_bottom = max(a_top, b_top), min(a_top + a.shape[0], b_top + b.shape[0])
-    width = min(a.shape[1], b.shape[1])
     left, top, right, bottom = box
-    if left < 0 or right > width or top < shown_top or bottom > shown_bottom:
+    if any(top < document.shown[0] or bottom > document.shown[1] for document in (a, b)):
         return None
-    margin = REFERENCE_MARGIN
-    common = (
-        max(0, round(left) - margin),
-        max(shown_top, round(top) - margin),
-        min(width, round(right) + margin),
-        min(shown_bottom, round(bottom) + margin),
-    )
-
-    def part(image, image_top: float, pad: int):  # noqa: ANN001, ANN202
-        x0, y0, x1, y1 = common
-        return image[
-            max(0, round(y0 - image_top) - pad) : max(0, round(y1 - image_top) + pad),
-            max(0, x0 - pad) : x1 + pad,
-        ]
+    margin, search = REFERENCE_MARGIN, REFERENCE_SEARCH
+    near = (round(left) - margin, round(top) - margin, round(right) + margin, round(bottom) + margin)
+    around = (near[0] - search, near[1] - search, near[2] + search, near[3] + search)
+    parts = [a.part(near), b.part(around), b.part(near), a.part(around)]
+    if any(part is None for part in parts):
+        return None
 
     def found(template, area) -> float:  # noqa: ANN001
-        # Rounding can make one rendering's part a pixel larger than the other's at the edge of what both show.
-        template = template[: area.shape[0], : area.shape[1]]
         best = float(cv2.matchTemplate(area, template, cv2.TM_SQDIFF).min())
         return (max(0.0, best) / template.size) ** 0.5
 
-    return max(
-        found(part(a, a_top, 0), part(b, b_top, REFERENCE_SEARCH)),
-        found(part(b, b_top, 0), part(a, a_top, REFERENCE_SEARCH)),
-    )
+    return max(found(parts[0], parts[1]), found(parts[2], parts[3]))
 
 
 # Computed style properties of DOM snapshot elements that a rendering difference often comes from.
