@@ -336,6 +336,17 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     reference_result = {"key": reference_key, "status": "FAIL", "expected": ["FAIL"], "message": "differ"}
     unchanged_key = f"{cli.BASELINE_TEST}order]"
     unchanged = {"key": unchanged_key, "status": "PASS", "expected": ["PASS"], "message": ""}
+    same = artifacts / "baseline-order"
+    same.mkdir()
+    (same / TEST_ARTIFACTS_MARKER).write_text(unchanged_key + "\n")
+    compare_captures(
+        store.captures("menu"),
+        _rendering(tmp_path / "same"),
+        store_preset(),
+        same,
+        ("baseline", "servoshell"),
+        describe=lambda: {"expected": origin, "actual": servo, "reference": references.origin("menu")},
+    )
     results = {key: result, reference_key: reference_result, unchanged_key: unchanged}
     (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": results}))
     assert cli.main(["report", str(artifacts)]) == 0
@@ -371,13 +382,48 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
 
 
-def test_the_report_reads_the_reference_hint_of_older_diff_json():
-    from servo_embedder_tests.report import _toward
+def test_the_report_says_what_regression_checks_that_compared_nothing_did(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(_rendering(tmp_path / "old"))
+    references = CaptureStore(tmp_path / "baselines", "rk3568", "arkweb")
+    references.put(_rendering(tmp_path / "arkweb", engine="arkweb", heading="Menu!"))
+    results = {}
 
-    assert _toward({"reference": "further from the reference (1.0 -> 2.0)"}) == "further"
-    assert _toward({"reference": "as far from the reference as before (1.0 -> 1.0)"}) == "same"
-    assert _toward({"reference": "not all in the reference's or the earlier capture's viewport"}) is None
-    assert _toward({"reference": "closer to the reference (2.0 -> 1.0)", "toward_reference": None}) is None
+    def test(scenario, test, status=None, compare=None, message=""):
+        key = f"page_scenarios/test_pages.py::{test}[{scenario}]"
+        folder = artifacts / f"{test}-{scenario}"
+        folder.mkdir(parents=True)
+        (folder / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+        if compare is not None:
+            expected, rendering, reference = compare
+            compare_captures(expected, rendering, store_preset(), folder, ("baseline", "servoshell"), reference)
+        if status is not None:
+            results[key] = {"key": key, "status": status, "expected": [status], "message": message}
+        return folder / "diff.json"
+
+    changed = _rendering(tmp_path / "new", heading="Menu!")
+    test("skipped", "test_matches_baseline", "SKIP", message="needs --baselines")
+    test("skipped", "test_matches_reference", "FAIL", (references.captures("menu"), changed, None))
+    test("stored", "test_matches_baseline", "PASS")
+    test("unknown", "test_matches_baseline", compare=(store.captures("menu"), _rendering(tmp_path / "same"), None))
+    older = test(
+        "older", "test_matches_baseline", "FAIL", (store.captures("menu"), changed, references.captures("menu"))
+    )
+    report = json.loads(older.read_text())
+    for region in report["captures"]["page-0"]["regions"]:
+        del region["toward_reference"]
+    older.write_text(json.dumps(report))
+    (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": results}))
+    (artifacts / "report-standalone.html").write_text("stale")
+    assert cli.main(["report", str(artifacts)]) == 0
+    page = (artifacts / "report.html").read_text()
+    assert '<h2 id="skipped">skipped </h2>' in page and '<h3 id="skipped-reference">' in page
+    assert '<h2 id="stored">stored <span class="verdict v-stored">Baseline stored</span></h2>' in page
+    assert '<h2 id="unknown">unknown <span class="verdict v-unchanged">Unchanged</span></h2>' in page
+    assert "compared by an earlier version, which didn&#x27;t judge them this way." in page
+    assert "aren&#x27;t judged as improvements or regressions" in page
+    assert "Page scenario report" in (artifacts / "report-standalone.html").read_text()
 
 
 def test_renderings_carry_the_name_given_to_the_engines_build(tmp_path):

@@ -224,14 +224,16 @@ def _report(argv: Sequence[str]) -> int:
     parser.add_argument(
         "--standalone",
         action="store_true",
-        help=f"also write {STANDALONE}, the report with its images inlined, one file to share",
+        help=f"also write {STANDALONE}, the report with its images inlined, one file to share (written anyway if "
+        "it's there)",
     )
     options = parser.parse_args(argv)
     path = write_report(options.artifacts, standalone=options.standalone)
     if path is None:
         print(f"error: no page scenarios ran in {options.artifacts}")
         return 1
-    print(f"wrote {path}" + (f" and {path.with_name(STANDALONE)}" if options.standalone else ""))
+    standalone = path.with_name(STANDALONE)
+    print(f"wrote {path}" + (f" and {standalone}" if standalone.is_file() else ""))
     return 0
 
 
