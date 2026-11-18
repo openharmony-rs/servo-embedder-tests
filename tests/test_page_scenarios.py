@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -377,7 +378,10 @@ def test_the_report_shows_differences_with_the_triage(tmp_path):
     assert not (artifacts / "report-standalone.html").exists()
     assert cli.main(["report", str(artifacts), "--standalone"]) == 0
     standalone = (artifacts / "report-standalone.html").read_text()
-    assert standalone.count('src="data:image/') == page.count("<img ") and ".png" not in standalone
+    pictures = standalone.count('src="data:image/') + standalone.count('role="img"')
+    assert pictures == page.count("<img ") and ".png" not in standalone
+    inlined = set(re.findall(r'class="pic (i\d+) ', standalone))
+    assert standalone.count('url("data:image/') == len(inlined) < standalone.count('role="img"')
     assert '<span class="toward t-closer">Closer to ArkWeb</span>' in standalone
     assert cli.main(["report", str(tmp_path / "baselines")]) == 1
 
