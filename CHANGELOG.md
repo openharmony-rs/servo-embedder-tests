@@ -1,24 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-- The page scenario report reads as a three-way comparison: each page gets a verdict (unchanged, likely regression,
-  likely improvement, mixed, unclear) from whether its changes since the baseline moved toward the reference engine's
-  rendering or away from it. Changed captures and their regions show the old rendering, the new one and the
-  reference's side by side; the engine comparison is folded away where there is a baseline. Renderings are named
-  after their engine and role, e.g. Old Servo, New Servo and ArkWeb, with their builds.
-- Changes of baselines that are only anti-aliasing or sub-pixel positions are `minor` in `diff.json`; the report shows
-  them folded away and leaves them out of a page's verdict. Baseline tests measure all differing regions for it, not
-  only the largest eight.
-- The report flags pages to check by eye: captures that weren't compared, and regions that matched the reference
-  before but no longer do, which a page's verdict can outweigh.
-- `run --standalone-report` and `report --standalone` also write `report-standalone.html`, the report with its images
-  inlined, one file to share instead of the artifacts folder.
-- Whether a change moved toward the reference engine's rendering allows for content laid out up to 24 CSS px apart
-  and compares colours; before, a blank region counted as closer to the reference's text than text a few pixels off.
-  Regions in `diff.json` have `toward_reference` (closer, further, same or null), baseline tests record where the
-  reference came from as `reference` and write `<capture>-reference.png`. References with a viewport of another
-  width aren't compared.
+- The report compares old, new and reference renderings side by side, with a verdict per page from the reference.
+- Whether a change moved toward the reference allows for content a few pixels apart (`toward_reference` in `diff.json`).
+- Changes that are only anti-aliasing are marked `minor` and left out of the verdicts.
+- The report flags captures that weren't compared and regions that stopped matching the reference.
+- `run --standalone-report` and `report --standalone` write `report-standalone.html`, one file with the images inlined.
 
 ## 0.2.0
 
