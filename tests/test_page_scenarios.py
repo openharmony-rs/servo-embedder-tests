@@ -416,6 +416,42 @@ def test_a_page_that_changed_only_in_anti_aliasing_has_minor_changes(tmp_path):
     assert 'class="box minor"' in page and "minor region(s): anti-aliasing or sub-pixel positions</summary>" in page
 
 
+def test_the_report_points_at_what_its_verdict_leaves_out(tmp_path):
+    artifacts = tmp_path / "artifacts"
+    old = _rendering(tmp_path / "old")
+    shutil.copyfile(old.directory / "page-0.png", old.directory / "page-1.png")
+    old.captures["page-1"] = replace(
+        old.captures["page-0"], name="page-1", image=old.directory / "page-1.png", scroll=(0, 300)
+    )
+    store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")
+    store.put(old)
+    references = CaptureStore(tmp_path / "baselines", "rk3568", "arkweb")
+    references.put(_rendering(tmp_path / "arkweb", engine="arkweb"))
+    key = f"{cli.BASELINE_TEST}menu]"
+    folder = artifacts / "baseline-menu"
+    folder.mkdir(parents=True)
+    (folder / TEST_ARTIFACTS_MARKER).write_text(key + "\n")
+    compare_captures(
+        store.captures("menu"),
+        _rendering(tmp_path / "new", heading="Menu!"),
+        store_preset(),
+        folder,
+        ("baseline", "servoshell"),
+        references.captures("menu"),
+        describe=lambda: {"reference": references.origin("menu")},
+    )
+    result = {"key": key, "status": "FAIL", "expected": ["PASS"], "message": "2 capture(s) differ"}
+    (artifacts / "results.json").write_text(json.dumps({"device_class": "openharmony", "results": {key: result}}))
+    assert cli.main(["report", str(artifacts)]) == 0
+    page = (artifacts / "report.html").read_text()
+    assert '<span class="verdict v-check" title="Something the verdict leaves out: see the page">Check</span>' in page
+    assert "<li>page-1: not captured this time</li>" in page
+    assert re.search(
+        r'<a href="#menu-baseline-page-0-0">page-0, region 1</a> matched arkweb before \(0\.0 apart\)', page
+    )
+    assert '<span class="verdict v-check">1 × check</span>' in page
+
+
 def test_the_report_says_what_regression_checks_that_compared_nothing_did(tmp_path):
     artifacts = tmp_path / "artifacts"
     store = CaptureStore(tmp_path / "baselines", "rk3568", "servoshell")

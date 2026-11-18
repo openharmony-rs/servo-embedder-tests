@@ -75,6 +75,10 @@ DISTANCES = re.compile(r"\(([\d.]+) -> ([\d.]+)\)$")
 # The share of a page's changed pixels whose regions must move toward the reference, or away from it, for its verdict
 # to say so; a few pixels that moved shouldn't make a page an improvement.
 VERDICT_SHARE = 0.1
+# A region whose old rendering was at most MATCHED apart from the reference's and whose new one is at least APART is
+# worth a look whatever its share of the changed pixels: something that matched the reference no longer does.
+MATCHED = 2.0
+APART = 8.0
 
 STYLE = """
 :root {
@@ -131,6 +135,8 @@ dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .t-same { background: var(--neutral); color: #fff; } .t-none { border-color: var(--neutral); color: var(--muted); }
 .t-minor { border-color: var(--line); color: var(--muted); }
 .v-minor { border-color: var(--line); color: var(--muted); }
+.v-check { border-color: var(--mixed); color: var(--mixed); }
+.note ul { margin: 4px 0; padding-left: 20px; }
 .shots { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   align-items: start; }
 figure { margin: 0; min-width: 0; max-width: 100%; }
@@ -359,6 +365,29 @@ def _judge(report: dict, sides: dict[str, Side]) -> Verdict:
     return Verdict("unclear", f"{why}; too little of the change moved toward {reference} or away from it to tell")
 
 
+def _notices(report: dict, sides: dict[str, Side], prefix: str) -> list[str]:
+    """What of a regression check's `diff.json` people should look at whatever the verdict, as HTML list items
+    linking to it: captures not compared, such as those of a page that got shorter, and regions that matched the
+    reference before but no longer do."""
+    reference = sides["ref"].name if "ref" in sides else "the reference"
+    found = []
+    for name, entry in report.get("captures", {}).items():
+        if entry.get("matches"):
+            continue
+        if not entry.get("regions"):
+            found.append(f"{escape(name)}: {escape(str(entry.get('summary', '')))}")
+        for index, region in enumerate(entry.get("regions", [])):
+            match = DISTANCES.search(str(region.get("reference") or ""))
+            if region.get("minor") or not match or float(match[1]) > MATCHED or float(match[2]) < APART:
+                continue
+            target = f"{prefix}-{name}-{index}" if region.get("crop") else f"{prefix}-{name}"
+            found.append(
+                f'<a href="#{escape(target)}">{escape(name)}, region {index + 1}</a> matched {escape(reference)} '
+                f"before ({match[1]} apart) but is {match[2]} apart now"
+            )
+    return found
+
+
 def _verdict(baseline: Result | None, report: dict, sides: dict[str, Side]) -> Verdict | None:
     """A page's verdict from its regression check, its result and `diff.json`; None if it had none."""
     captures = report.get("captures", {})
@@ -502,7 +531,7 @@ def _capture(
             parts.append(f"{len(regions) - len(major)} minor")
         if parts:
             summary += ": " + ", ".join(parts)
-    title = f"<h4>{escape(name)} <span class=muted>· {escape(summary)}</span></h4>"
+    title = f'<h4 id="{escape(prefix)}-{escape(name)}">{escape(name)} <span class=muted>· {escape(summary)}</span></h4>'
     # Why none of the regions could be judged, such as viewports of other widths, goes here once.
     reasons = {str(region.get("reference") or "") for region in major}
     common = reasons.pop() if judged_by is not None and major and not any(towards) and len(reasons) == 1 else ""
@@ -771,6 +800,13 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
         )
         for scenario in scenarios
     }
+    notices = {
+        scenario: _notices(
+            diffs.get((scenario, BASELINE), {}), sides.get((scenario, BASELINE), {}), f"{scenario}-baseline"
+        )
+        for scenario in scenarios
+    }
+    check = '<span class="verdict v-check" title="Something the verdict leaves out: see the page">Check</span>'
     order = list(VERDICTS)
     scenarios.sort(key=lambda scenario: order.index(verdict.key) if (verdict := verdicts[scenario]) else 0)
     names = {side.role: side.name for found in sides.values() for side in found.values()}
@@ -781,7 +817,12 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
     head = ("<th>Verdict</th>" if checked else "") + "".join(f"<th>{escape(columns[kind])}</th>" for kind in kinds)
     rows = "".join(
         f'<tr><td><a href="#{escape(scenario)}">{escape(scenario)}</a></td>'
-        + (f"<td>{verdict.chip if (verdict := verdicts[scenario]) else ''}</td>" if checked else "")
+        + (
+            f"<td>{verdict.chip if (verdict := verdicts[scenario]) else ''}{' ' + check if notices[scenario] else ''}"
+            "</td>"
+            if checked
+            else ""
+        )
         + "".join(f"<td>{_status(results.get((scenario, kind)))}</td>" for kind in kinds)
         + "</tr>"
         for scenario in scenarios
@@ -794,6 +835,11 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
             f'<span class="verdict v-{key}">{count} × {VERDICTS[key].lower()}</span>'
             for key, count in counts.items()
             if count
+        )
+        + (
+            f'<span class="verdict v-check">{flagged} × check</span>'
+            if (flagged := sum(1 for found in notices.values() if found))
+            else ""
         )
         + "</div>"
         if checked
@@ -818,9 +864,15 @@ def write_report(artifacts: Path, results_json: Path | None = None, standalone: 
         sections = []
         for scenario in scenarios:
             verdict = verdicts[scenario]
-            parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)} {verdict.chip if verdict else ""}</h2>']
+            flag = f" {check}" if notices[scenario] else ""
+            parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)} {verdict.chip if verdict else ""}{flag}</h2>']
             if verdict:
                 parts.append(f"<p class=why>{escape(verdict.why)}.</p>")
+            if notices[scenario]:
+                parts.append(
+                    '<div class="note"><strong>Look at the pictures</strong> <span class=muted>(the verdict leaves '
+                    "these out)</span><ul>" + "".join(f"<li>{item}</li>" for item in notices[scenario]) + "</ul></div>"
+                )
             found = renderings.get(scenario, [])
             parts += [_rendering(images, folder, data) for folder, data in found]
             renders = results.get((scenario, RENDERS))
