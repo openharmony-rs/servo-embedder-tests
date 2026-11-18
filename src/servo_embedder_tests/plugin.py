@@ -38,7 +38,15 @@ COMPARISON = re.compile(r"::test_matches_(baseline|reference)\[")
 EXPECTED_KEY = pytest.StashKey[list[str]]()
 # Marks a per-test artifacts folder, so that the next run can remove it.
 TEST_ARTIFACTS_MARKER = "test-key.txt"
-RUN_ARTIFACTS = ("results.json", "hilog.txt", "servoshell.log", "mitmproxy.log", "chromedriver.log", "report.html")
+RUN_ARTIFACTS = (
+    "results.json",
+    "hilog.txt",
+    "servoshell.log",
+    "mitmproxy.log",
+    "chromedriver.log",
+    "report.html",
+    "report-standalone.html",
+)
 TEST_KEY = pytest.StashKey[str]()
 NEEDS_TEST_IME = "needs a test IME: pass --test-ime <bundle>"
 
@@ -107,6 +115,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     group.addoption("--update-baselines", action="store_true", help="store this run's captures as the baselines")
     group.addoption(
         "--update-references", action="store_true", help="render the references anew even where they are stored"
+    )
+    group.addoption(
+        "--standalone-report",
+        action="store_true",
+        help="also write the page scenario report with its images inlined, one file to share: report-standalone.html",
     )
     group.addoption("--chromedriver", type=Path, help="chromedriver matching ArkWeb's Chromium, for the arkweb engine")
 
@@ -309,7 +322,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int | pytest.ExitC
     path.write_text(run.report.to_json(), encoding="utf-8")
     from .report import write_report
 
-    run.page_report = write_report(run.artifacts, path)
+    run.page_report = write_report(run.artifacts, path, config.option.standalone_report)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(summary, "a", encoding="utf-8") as f:
             f.write(_markdown_summary(run.report))
@@ -469,6 +482,9 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter, config: p
         terminalreporter.line("no unexpected results")
     if run.page_report is not None:
         terminalreporter.line(f"page scenario report: {run.page_report}")
+        standalone = run.page_report.with_name("report-standalone.html")
+        if config.option.standalone_report and standalone.is_file():
+            terminalreporter.line(f"as one file to share: {standalone}")
     if failed := _failed_comparisons(run.report):
         terminalreporter.line(f"{failed} page scenario comparison(s) failed; to triage them, read {SKILL / 'SKILL.md'}")
 

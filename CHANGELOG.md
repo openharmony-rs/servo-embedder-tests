@@ -7,6 +7,8 @@
   rendering or away from it. Changed captures and their regions show the old rendering, the new one and the
   reference's side by side; the engine comparison is folded away where there is a baseline. Renderings are named
   after their engine and role, e.g. Old Servo, New Servo and ArkWeb, with their builds.
+- `run --standalone-report` and `report --standalone` also write `report-standalone.html`, the report with its images
+  inlined, one file to share instead of the artifacts folder.
 - Whether a change moved toward the reference engine's rendering allows for content laid out up to 24 CSS px apart
   and compares colours; before, a blank region counted as closer to the reference's text than text a few pixels off.
   Regions in `diff.json` have `toward_reference` (closer, further, same or null), baseline tests record where the

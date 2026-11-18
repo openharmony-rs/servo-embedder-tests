@@ -16,21 +16,32 @@ skill) and the agent's conclusion (`triage.json`), so that people can check them
     {"agent": "<who>", "verdict": "regression", "summary": "<text>", "regions": {"<capture>-<n>": "<text>"}}
 
 `<capture>-<n>` names a region as its crop does (`regions/<capture>-<n>.png`).
+
+The report shows the images in the artifacts folder; `report-standalone.html`, written on request, is the same report
+with its images inlined, one file to share.
 """
 
 from __future__ import annotations
 
+import base64
 import datetime
+import functools
+import io
 import json
 import re
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
 
+from PIL import Image, features
+
 from .expectations import Result, RunReport
 from .plugin import TEST_ARTIFACTS_MARKER
 
 REPORT = "report.html"
+# The report as one file to share, with its images inlined, in WebP of this quality (see `Images`).
+STANDALONE = "report-standalone.html"
+INLINE_QUALITY = 80
 TRIAGE = "triage.json"
 VISION = "vision.json"
 BASELINE = "test_matches_baseline"
@@ -360,19 +371,78 @@ def _shot(images: list[tuple[str, str]], width: float, boxes: str, caption: str)
     )
 
 
-def _crop(src: str, caption: str, box: tuple[float, float, float, float], size: list, zoom: float) -> str:
-    """The part `box` (CSS px of the compared part, `size`) of the image `src`, enlarged by `zoom`."""
+@functools.lru_cache(maxsize=16)
+def _open(path: Path) -> Image.Image:
+    with Image.open(path) as image:
+        return image.convert("RGB")
+
+
+class Images:
+    """How the report refers to the images in the artifacts folder `root`: by their paths, or, `inline`, as data URIs,
+    so that the report is one file to share. Inlined, full captures have one pixel per CSS pixel and crops up to twice
+    the pixels they are shown with, in WebP of INLINE_QUALITY: on 8 GenUI pages, 15 MB instead of 106 MB of PNGs."""
+
+    def __init__(self, root: Path, inline: bool = False) -> None:
+        self.root = root
+        self.inline = inline
+        self._uris: dict[tuple[str, int | None], str] = {}
+
+    @staticmethod
+    def _uri(image: Image.Image) -> str:
+        webp = features.check("webp")
+        buffer = io.BytesIO()
+        image.save(buffer, "WEBP" if webp else "JPEG", quality=INLINE_QUALITY)
+        kind = "webp" if webp else "jpeg"
+        return f"data:image/{kind};base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+
+    def src(self, path: str, width: float | None = None) -> str:
+        """What an `<img src>` names for `path`, relative to `root`, an image shown at most `width` CSS px wide."""
+        if not self.inline:
+            return path
+        key = (path, None if width is None else round(width))
+        if key not in self._uris:
+            image = _open(self.root / path)
+            if width is not None and image.width > width:
+                image = image.resize((round(width), max(1, round(width * image.height / image.width))), Image.LANCZOS)
+            self._uris[key] = self._uri(image)
+        return self._uris[key]
+
+    def part(self, path: str, box: tuple[float, float, float, float], size: list, shown: float) -> str:
+        """An `<img>` of the part `box`, in CSS px of the `size` the image `path` shows, `shown` CSS px wide."""
+        left, top, right, bottom = box
+        width, height = right - left, bottom - top
+        if not self.inline:
+            style = (
+                f"width: {100 * size[0] / width:.3f}%; left: {-100 * left / width:.3f}%; "
+                f"top: {-100 * top / height:.3f}%"
+            )
+            return f'<img src="{escape(path)}" alt="" loading="lazy" style="{style}">'
+        image = _open(self.root / path)
+        scale = image.width / size[0]
+        part = image.crop(tuple(round(value * scale) for value in box))
+        if part.width > 2 * shown:
+            part = part.resize((round(2 * shown), max(1, round(2 * shown * part.height / part.width))), Image.LANCZOS)
+        return f'<img src="{self._uri(part)}" alt="" style="width: 100%; height: 100%; left: 0; top: 0">'
+
+    def link(self, path: str, text: str) -> str:
+        """`text` linking to the file `path`, which an inlined report doesn't have."""
+        return text if self.inline else f'<a href="{escape(path)}">{text}</a>'
+
+
+def _crop(
+    images: Images, path: str, caption: str, box: tuple[float, float, float, float], size: list, zoom: float
+) -> str:
+    """The part `box` (CSS px of the compared part, `size`) of the image `path`, enlarged by `zoom`."""
     left, top, right, bottom = box
     width, height = right - left, bottom - top
-    style = f"width: {100 * size[0] / width:.3f}%; left: {-100 * left / width:.3f}%; top: {-100 * top / height:.3f}%"
     return (
         f'<figure><div class="view" style="width: {width * zoom:.0f}px; aspect-ratio: {width:g} / {height:g}">'
-        f'<img src="{escape(src)}" alt="" loading="lazy" style="{style}"></div><figcaption>{caption}</figcaption>'
-        "</figure>"
+        f"{images.part(path, box, size, width * zoom)}</div><figcaption>{caption}</figcaption></figure>"
     )
 
 
 def _capture(
+    images: Images,
     prefix: str,
     folder: Path,
     name: str,
@@ -384,7 +454,7 @@ def _capture(
 ) -> str:
     """A differing capture: the compared images, `panels` of (side, image key) with the side that changed last, the
     differing pixels, and a card per region. `judged_by` is the reference that judged the changes, if any."""
-    images = entry.get("images")
+    files = entry.get("images")
     regions = entry.get("regions", [])
     shown = [(index, region) for index, region in enumerate(regions) if region.get("crop")]
     reference = judged_by.name if judged_by else ""
@@ -402,13 +472,13 @@ def _capture(
     common = reasons.pop() if judged_by is not None and regions and not any(towards) and len(reasons) == 1 else ""
     if common:
         title += f"<p class=muted>{escape(reference)}: {escape(common)}</p>"
-    if not images:
+    if not files:
         compare = entry.get("compare")
-        return title + (f'<img src="{escape(folder.name)}/{escape(compare)}" alt="">' if compare else "")
+        return title + (f'<img src="{escape(images.src(f"{folder.name}/{compare}"))}" alt="">' if compare else "")
     base = f"{folder.name}/"
     width, height = entry["size"]
     offset = entry["offset"]
-    panels = [(side, key) for side, key in panels if images.get(key)]
+    panels = [(side, key) for side, key in panels if files.get(key)]
     boxes = ""
     for index, region in shown:
         left, top, right, bottom = region["box"]
@@ -422,13 +492,14 @@ def _capture(
     differing = Side("changed", changes, "")
     shots = []
     for side, key in panels:
-        stack = [(base + images[key], side.name)]
+        stack = [(images.src(base + files[key], width), side.name)]
         caption = side.label()
         if side.role == "new":
-            stack = [(base + images[first[1]], first[0].name), *stack]
+            stack = [(images.src(base + files[first[1]], width), first[0].name), *stack]
             caption = side.label(f" <span class=muted>(hover: {escape(first[0].name)})</span>")
         shots.append(_shot(stack, width, boxes, caption))
-    shots.append(_shot([(base + images["differing"], changes)], width, boxes, differing.label()))
+    differing_src = images.src(base + files["differing"], width)
+    shots.append(_shot([(differing_src, changes)], width, boxes, differing.label()))
     items = []
     for index, region in shown:
         crop_id = Path(region["crop"]).stem
@@ -443,8 +514,10 @@ def _capture(
         crop_width, crop_height = area[2] - area[0], area[3] - area[1]
         stacked = crop_width > WIDE * crop_height
         zoom = min(CROP_ZOOM, (2 if stacked else 1) * CROP_SIZE / crop_width, CROP_SIZE / crop_height)
-        crops = [_crop(base + images[key], side.label(), area, entry["size"], zoom) for side, key in panels]
-        crops.append(_crop(base + images["differing"], differing.label(), area, entry["size"], zoom))
+        crops = [
+            _crop(images, base + files[key], side.label(), area, entry["size"], zoom)
+            for side, key in [*panels, (differing, "differing")]
+        ]
         facts = [("Measured", escape(str(region.get("reading") or "")))]
         if judged_by is not None and region.get("reference") and _toward(region) is None and not common:
             facts.append((reference, escape(str(region["reference"]))))
@@ -463,7 +536,7 @@ def _capture(
         items.append(
             f'<li id="{prefix}-{escape(name)}-{index}"><div class="region-head"><span class="badge">{index + 1}</span>'
             f"{chip}<span class=muted>{where}, {region['differing']} px differ, "
-            f'<a href="{escape(base + region["crop"])}"><code>{escape(crop_id)}</code></a></span></div>'
+            f"{images.link(base + region['crop'], f'<code>{escape(crop_id)}</code>')}</span></div>"
             f'<div class="crops{" stacked" if stacked else ""}">{"".join(crops)}</div>'
             "<dl>" + "".join(f"<dt>{key}</dt><dd>{value}</dd>" for key, value in facts) + "</dl></li>"
         )
@@ -502,7 +575,9 @@ def _capture(
     )
 
 
-def _comparison(prefix: str, test: str, folder: Path | None, result: Result | None, sides: dict[str, Side]) -> str:
+def _comparison(
+    images: Images, prefix: str, test: str, folder: Path | None, result: Result | None, sides: dict[str, Side]
+) -> str:
     """The body of a comparison: what it compared, its notes and its differing captures."""
     report = _load(folder / "diff.json") if folder else {}
     head = ""
@@ -540,7 +615,7 @@ def _comparison(prefix: str, test: str, folder: Path | None, result: Result | No
     captures = report.get("captures", {})
     matching = [name for name, entry in captures.items() if entry.get("matches")]
     body = "".join(
-        _capture(prefix, folder, name, entry, panels, answers, triage.get("regions", {}), judged_by)
+        _capture(images, prefix, folder, name, entry, panels, answers, triage.get("regions", {}), judged_by)
         for name, entry in captures.items()
         if not entry.get("matches")
     )
@@ -548,7 +623,7 @@ def _comparison(prefix: str, test: str, folder: Path | None, result: Result | No
     return head + same + body
 
 
-def _rendering(folder: Path, data: dict) -> str:
+def _rendering(images: Images, folder: Path, data: dict) -> str:
     info = data.get("info", {})
     engine = info.get("engine") or {}
     what = engine.get("user_agent", "") if isinstance(engine, dict) else ""
@@ -572,7 +647,7 @@ def _rendering(folder: Path, data: dict) -> str:
     )
     failure = folder / "failure.png"
     shot = (
-        f'<img src="{escape(folder.name)}/failure.png" alt="failure" style="max-width: 360px">'
+        f'<img src="{escape(images.src(f"{folder.name}/failure.png", 360))}" alt="failure" style="max-width: 360px">'
         if failure.is_file()
         else ""
     )
@@ -611,9 +686,10 @@ def _legend(sides: list[dict[str, Side]], checked: bool) -> str:
     return f'<div class="legend"><p>{escape(how)}</p><dl>{rows}</dl></div>'
 
 
-def write_report(artifacts: Path, results_json: Path | None = None) -> Path | None:
+def write_report(artifacts: Path, results_json: Path | None = None, standalone: bool = False) -> Path | None:
     """Writes `report.html` to `artifacts`, a run's artifacts folder, if page scenarios ran there, with the statuses
-    from `results_json` (default: the one in `artifacts`). Returns its path."""
+    from `results_json` (default: the one in `artifacts`), and with `standalone` also `report-standalone.html`, which
+    has its images inlined. Returns the path of `report.html`."""
     results_json = results_json or artifacts / "results.json"
     tests: dict[tuple[str, str], Path] = {}
     for marker in artifacts.glob(f"*/{TEST_ARTIFACTS_MARKER}"):
@@ -673,49 +749,6 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
         if checked
         else ""
     )
-    sections = []
-    for scenario in scenarios:
-        verdict = verdicts[scenario]
-        parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)} {verdict.chip if verdict else ""}</h2>']
-        if verdict:
-            parts.append(f"<p class=why>{escape(verdict.why[:1].upper() + verdict.why[1:])}.</p>")
-        found = renderings.get(scenario, [])
-        parts += [_rendering(folder, data) for folder, data in found]
-        renders = results.get((scenario, RENDERS))
-        explained = any(data.get("problems") or data.get("error") for _, data in found)
-        if renders is not None and renders.status != "PASS" and renders.message and not explained:
-            parts.append(f"<pre>{escape(renders.message)}</pre>")
-        key = (scenario, BASELINE)
-        found_sides = sides.get(key, {})
-        if key in tests or key in results:
-            if verdict is None or verdict.key != "unchanged":
-                title = f"{found_sides['old'].name} → {found_sides['new'].name}" if found_sides else "Regression check"
-                parts.append(f'<h3 id="{escape(scenario)}-baseline">{escape(title)} {_status(results.get(key))}</h3>')
-                parts.append(
-                    _comparison(f"{scenario}-baseline", BASELINE, tests.get(key), results.get(key), found_sides)
-                )
-        key = (scenario, REFERENCE)
-        if key in tests or key in results:
-            found_sides = sides.get(key, {})
-            title = (
-                f"{found_sides['new'].name} against {found_sides['ref'].name}" if found_sides else "Engine comparison"
-            )
-            body = _comparison(f"{scenario}-reference", REFERENCE, tests.get(key), results.get(key), found_sides)
-            heading = f"{escape(title)} {_status(results.get(key))}"
-            if verdict is not None and verdict.key != "new" and body:
-                regions = sum(
-                    len(entry.get("regions", []))
-                    for entry in diffs.get(key, {}).get("captures", {}).values()
-                    if not entry.get("matches")
-                )
-                parts.append(
-                    f'<details class="gaps" id="{escape(scenario)}-reference"><summary>{heading} '
-                    f"<span class=muted>({regions} differing region(s); the gaps that remain)</span></summary>"
-                    f"{body}</details>"
-                )
-            else:
-                parts.append(f'<h3 id="{escape(scenario)}-reference">{heading}</h3>{body}')
-        sections.append("<section>" + "".join(parts) + "</section>")
     environment = report.environment if report else {}
     device = ", ".join(f"{key} {value}" for key, value in environment.items() if isinstance(value, str | int | float))
     written = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
@@ -730,16 +763,75 @@ def write_report(artifacts: Path, results_json: Path | None = None) -> Path | No
         if failed
         else ""
     )
-    page = (
-        "<!DOCTYPE html>\n<html lang=en><head><meta charset=utf-8>"
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
-        f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
-        f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
-        f"{_legend(list(sides.values()), checked)}{tally}{triage}"
-        '<input type="checkbox" id="boxes" checked> <label for="boxes">Show region boxes</label>'
-        f"<main>{summary}{''.join(sections)}</main></body></html>\n"
-    )
+
+    def render(images: Images) -> str:
+        sections = []
+        for scenario in scenarios:
+            verdict = verdicts[scenario]
+            parts = [f'<h2 id="{escape(scenario)}">{escape(scenario)} {verdict.chip if verdict else ""}</h2>']
+            if verdict:
+                parts.append(f"<p class=why>{escape(verdict.why[:1].upper() + verdict.why[1:])}.</p>")
+            found = renderings.get(scenario, [])
+            parts += [_rendering(images, folder, data) for folder, data in found]
+            renders = results.get((scenario, RENDERS))
+            explained = any(data.get("problems") or data.get("error") for _, data in found)
+            if renders is not None and renders.status != "PASS" and renders.message and not explained:
+                parts.append(f"<pre>{escape(renders.message)}</pre>")
+            key = (scenario, BASELINE)
+            found_sides = sides.get(key, {})
+            if key in tests or key in results:
+                if verdict is None or verdict.key != "unchanged":
+                    title = (
+                        f"{found_sides['old'].name} → {found_sides['new'].name}" if found_sides else "Regression check"
+                    )
+                    parts.append(
+                        f'<h3 id="{escape(scenario)}-baseline">{escape(title)} {_status(results.get(key))}</h3>'
+                    )
+                    parts.append(
+                        _comparison(
+                            images, f"{scenario}-baseline", BASELINE, tests.get(key), results.get(key), found_sides
+                        )
+                    )
+            key = (scenario, REFERENCE)
+            if key in tests or key in results:
+                found_sides = sides.get(key, {})
+                title = (
+                    f"{found_sides['new'].name} against {found_sides['ref'].name}"
+                    if found_sides
+                    else "Engine comparison"
+                )
+                body = _comparison(
+                    images, f"{scenario}-reference", REFERENCE, tests.get(key), results.get(key), found_sides
+                )
+                heading = f"{escape(title)} {_status(results.get(key))}"
+                if verdict is not None and verdict.key != "new" and body:
+                    regions = sum(
+                        len(entry.get("regions", []))
+                        for entry in diffs.get(key, {}).get("captures", {}).values()
+                        if not entry.get("matches")
+                    )
+                    parts.append(
+                        f'<details class="gaps" id="{escape(scenario)}-reference"><summary>{heading} '
+                        f"<span class=muted>({regions} differing region(s); the gaps that remain)</span></summary>"
+                        f"{body}</details>"
+                    )
+                else:
+                    parts.append(f'<h3 id="{escape(scenario)}-reference">{heading}</h3>{body}')
+            sections.append("<section>" + "".join(parts) + "</section>")
+        return (
+            "<!DOCTYPE html>\n<html lang=en><head><meta charset=utf-8>"
+            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            f"<title>Page scenario report</title><style>{STYLE}</style></head><body>"
+            f"<h1>Page scenario report</h1><p class=muted>{escape(device)}"
+            f"{' · ' if device else ''}device class {escape(report.device_class if report else '?')} · {written}</p>"
+            f"{_legend(list(sides.values()), checked)}{tally}{triage}"
+            '<input type="checkbox" id="boxes" checked> <label for="boxes">Show region boxes</label>'
+            f"<main>{summary}{''.join(sections)}</main></body></html>\n"
+        )
+
     path = artifacts / REPORT
-    path.write_text(page, encoding="utf-8")
+    path.write_text(render(Images(artifacts)), encoding="utf-8")
+    if standalone:
+        (artifacts / STANDALONE).write_text(render(Images(artifacts, inline=True)), encoding="utf-8")
+        _open.cache_clear()
     return path
