@@ -140,8 +140,11 @@ Each scenario has three tests:
 - `test_matches_baseline`: each capture matches the engine's baseline;
 - `test_matches_reference`: each capture matches the reference engine's.
 
-The first is a regression check: it finds what changed since the baselines were stored, e.g. with an engine update.
-The second is an engine comparison: it finds the gaps between two engines. `--engine-version NAME` and
+`test_matches_baseline` is a regression check: it finds what changed since the baselines were stored, e.g. with an
+engine update. `test_matches_reference` is an engine comparison: it finds the gaps between two engines. Together they
+make a three-way comparison: where a page changed since its baseline, the reference engine's stored rendering tells
+whether each change brought it closer to the reference, likely an improvement, or took it further away, likely a
+regression. `--engine-version NAME` and
 `--reference-engine-version NAME` name the builds, e.g. a commit or a release. The name is kept with their captures
 and baselines, so that `diff.json` and the report say which builds were compared. Stored references keep the name
 they were rendered with: `--reference-engine-version` names those rendered in the run, see `--update-references`.
@@ -176,11 +179,14 @@ Each comparison test writes `diff.json` with, for each capture:
   aligned, or a colour drawn in another colour (such as a colour emoji drawn black). It starts with the images in the
   region that did not load, if any;
 - `dom_changes`, the elements whose text, box, style or image load state changed;
-- for baselines, whether each region moved closer to the reference engine's rendering or further from it, a hint
-  whether a change is an improvement.
+- for baselines, with the reference engine's captures stored, whether each region moved closer to the reference
+  engine's rendering or further from it (`toward_reference`: closer, further or same), a hint whether a change is an
+  improvement. Each rendering's part of the region is looked for in the other's within 24 CSS px, so that content the
+  engines lay out a few pixels apart counts as found, and a blank as far from content.
 
-It also writes `<capture>-compare.png` (expected, actual and the differing pixels) and a crop of each region in
-`regions/`, expected above actual above the differing pixels. Those crops are what to send to an image-capable model
+It also writes `<capture>-compare.png` (expected, actual and the differing pixels), for baselines the reference
+engine's view of the compared part as `<capture>-reference.png`, and a crop of each region in `regions/`, expected
+above actual above the differing pixels. Those crops are what to send to an image-capable model
 for what the readings leave open: the `compare-renderings` skill describes how an agent triages a run, and its
 script asks any OpenAI-compatible endpoint about the regions.
 

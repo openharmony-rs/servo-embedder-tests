@@ -2,8 +2,9 @@
 
 `test_renders` checks that a page gets ready, settles and passes its own checks (`expect_change`, recorded errors,
 the seeded `Math.random()`).
-`test_matches_baseline` compares the captures of --engine with its baselines in --baselines, and
-`test_matches_reference` with those of --reference-engine, stored in --baselines or rendered in the run. Each page is
+`test_matches_baseline` compares the captures of --engine with its baselines in --baselines, noting for each change
+whether it moved toward the stored captures of --reference-engine, and `test_matches_reference` compares them with
+those, stored in --baselines or rendered in the run. Each page is
 rendered once per engine for all three. Differences are described in each test's `diff.json`: the comparison tests
 decide at once, and describing the differences, the slow part, goes on in the background until the end of the run.
 """
@@ -42,14 +43,19 @@ def test_matches_baseline(scenario, page_runs, artifacts):
             f"no baseline in {store.directory(scenario.name)}; store one with --update-baselines or "
             "`servo-embedder-tests accept`"
         )
+    reference, origin = page_runs.stored_reference(scenario)
     comparison = compare_captures(
         expected,
         rendering,
         scenario.preset("baseline"),
         artifacts,
         ("baseline", page_runs.engine),
-        page_runs.stored_reference(scenario),
-        lambda: {"expected": store.origin(scenario.name), "actual": rendering.info.get("engine")},
+        reference,
+        lambda: {
+            "expected": store.origin(scenario.name),
+            "actual": rendering.info.get("engine"),
+            **({"reference": origin} if origin else {}),
+        },
         describer=page_runs.describer,
     )
     assert comparison.matches, comparison.message(f"the baseline in {store.directory(scenario.name)}")

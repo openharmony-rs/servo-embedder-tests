@@ -51,9 +51,13 @@ For each capture, `diff.json` gives:
   capture's DOM snapshot. A style change, or a text box that got wider or narrower, often explains a region outright:
   another fallback font, another weight, changed spacing. Against a reference engine, a paint property one engine
   computes and the other doesn't (`background_clip: text` against none) points at CSS the other engine lacks.
-- **`reference`** (baseline tests, when the reference engine's capture is stored): whether the new rendering of the
-  region is closer to the reference engine's or further from it. Closer suggests an improvement, further a
-  regression. The engines rasterize differently, so it's a hint, not a verdict.
+- **`toward_reference`** and **`reference`** (baseline tests, when the reference engine's capture is stored): whether
+  the new rendering of the region is `closer` to the reference engine's than the baseline, `further` from it or the
+  `same`, and in words with the distances (baseline -> new). Closer suggests an improvement, further a regression.
+  Content the engines lay out a few CSS px apart still counts as matching, and a blank where the reference has
+  content as far from it. The engines rasterize differently, so it's a hint, not a verdict. `null` with `reference`
+  saying why: the region isn't in all three captures, or the viewports have other widths (then no region of the page
+  can be judged). `<capture>-reference.png` shows the reference's view of the compared part.
 - **`notes`**: viewport or scroll differences, and what part was compared.
 
 Also check:

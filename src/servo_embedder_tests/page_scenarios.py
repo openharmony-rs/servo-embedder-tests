@@ -795,11 +795,12 @@ class Description:
                 missing = sorted({str(element["src"]) for element in diffing.elements_in(broken, region.box, 3)})
                 if missing:
                     region.reading = f"image {', '.join(missing)} did not load in {self.labels[1]}; {region.reading}"
-            if self.reference and name in self.reference:
-                diffing.reference_hint(stored.shot, actual.shot, self.reference[name].shot, diff.regions)
+            reference = self.reference[name].shot if self.reference and name in self.reference else None
+            if reference is not None:
+                diffing.reference_hint(stored.shot, actual.shot, reference, diff.regions)
             overlay = _overlay(self.directory, name)
             images = diffing.write_review_images(
-                stored.shot, actual.shot, diff, overlay, self.directory, name, self.labels
+                stored.shot, actual.shot, diff, overlay, self.directory, name, self.labels, reference
             )
             captures[name].update(
                 diff.to_dict(),
@@ -1011,9 +1012,11 @@ class PageRuns:
     def store(self, engine: str) -> CaptureStore | None:
         return CaptureStore(self.baselines, self.device, engine) if self.baselines else None
 
-    def stored_reference(self, scenario: Scenario) -> dict[str, Capture]:
+    def stored_reference(self, scenario: Scenario) -> tuple[dict[str, Capture], dict[str, object]]:
+        """The reference engine's stored captures of `scenario`, with how they were made; empty without them."""
         store = self.store(self.reference) if self.reference else None
-        return store.captures(scenario.name) if store else {}
+        captures = store.captures(scenario.name) if store else {}
+        return captures, store.origin(scenario.name) if store and captures else {}
 
     def reference_captures(self, scenario: Scenario) -> tuple[dict[str, Capture], dict[str, object]] | None:
         """The reference engine's captures of `scenario`, stored or rendered now (and then stored), with how they

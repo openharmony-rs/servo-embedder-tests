@@ -375,6 +375,23 @@ def test_renderings_carry_the_name_given_to_the_engines_build(tmp_path):
     assert written["info"]["engine"]["version"] == "main@3f2a1b"
 
 
+def test_stored_references_come_with_where_they_came_from(tmp_path):
+    references = CaptureStore(tmp_path / "baselines", "rk3568", "arkweb")
+    references.put(_rendering(tmp_path / "arkweb", engine="arkweb"), reason="reference rendering")
+    runs = PageRuns(
+        {"servoshell": cast(Engine, None)},
+        "servoshell",
+        "arkweb",
+        cast(Renderer, None),
+        tmp_path / "baselines",
+        "rk3568",
+        lambda name: tmp_path / name,
+    )
+    captures, origin = runs.stored_reference(cast(Scenario, SimpleNamespace(name="menu")))
+    assert list(captures) == ["page-0"] and origin["reason"] == "reference rendering"
+    assert runs.stored_reference(cast(Scenario, SimpleNamespace(name="order"))) == ({}, {})
+
+
 def test_accept_stores_the_failed_scenarios(tmp_path, capsys):
     artifacts = tmp_path / "artifacts"
     _rendering(artifacts / "page-scenarios_servoshell_menu", heading="New")
