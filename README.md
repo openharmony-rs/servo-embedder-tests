@@ -200,7 +200,9 @@ run goes on to the next test; `diff.json` and the images are complete when the r
 For people, a run writes `report.html` to the artifacts folder. It starts with each page's verdict: unchanged since
 its baseline, or, where it changed, a likely regression or improvement by whether the changes took it away from the
 reference engine's rendering or toward it, mixed, or unclear. Minor changes are shown, with dashed boxes and folded
-away, but left out of the verdict; a page that changed only in them has minor changes. For each changed capture it shows the old rendering,
+away, but left out of the verdict; a page that changed only in them has minor changes. Pages get a "Check" flag, with
+links, for what their verdict leaves out: captures that weren't compared, such as those of a page that got shorter,
+and regions that matched the reference engine's rendering before but no longer do, however small. For each changed capture it shows the old rendering,
 the new one (hover it to see the old one in its place), the reference engine's and the changed pixels, then each
 region numbered with its verdict, the renderings of it side by side and enlarged, its readings and the DOM changes.
 The engine comparison, the gaps that remain to the reference engine, is folded away below; without baselines, it is

@@ -10,6 +10,8 @@
 - Changes of baselines that are only anti-aliasing or sub-pixel positions are `minor` in `diff.json`; the report shows
   them folded away and leaves them out of a page's verdict. Baseline tests measure all differing regions for it, not
   only the largest eight.
+- The report flags pages to check by eye: captures that weren't compared, and regions that matched the reference
+  before but no longer do, which a page's verdict can outweigh.
 - `run --standalone-report` and `report --standalone` also write `report-standalone.html`, the report with its images
   inlined, one file to share instead of the artifacts folder.
 - Whether a change moved toward the reference engine's rendering allows for content laid out up to 24 CSS px apart
